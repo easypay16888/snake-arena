@@ -320,8 +320,6 @@ function applyPowerup(player, type) {
       break;
     case 'reverse':
       player.buffs.reverse = 150;
-      // Immediately swap direction
-      player.nextDirection = { x: -player.nextDirection.x, y: -player.nextDirection.y };
       break;
     case 'invincible':
       player.buffs.invincible = 150; // 15 seconds at 10 ticks/sec
