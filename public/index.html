@@ -1544,61 +1544,88 @@
       const head = bot.snake[0];
       const dir = bot.direction;
 
+      // Build obstacle set: player snake (skip tail) + other bots (skip tail)
+      const obs = new Set();
+      const playerBody = soloSnake;
+      for (let i = 0; i < playerBody.length; i++) {
+        if (i === playerBody.length - 1) continue; // tail will move
+        obs.add(`${playerBody[i].x},${playerBody[i].y}`);
+      }
+      for (const other of soloBots) {
+        if (other.id === bot.id || !other.alive) continue;
+        for (let i = 0; i < other.snake.length; i++) {
+          if (i === other.snake.length - 1) continue;
+          obs.add(`${other.snake[i].x},${other.snake[i].y}`);
+        }
+      }
+      // Self body (skip tail)
+      for (let i = 1; i < bot.snake.length - 1; i++) {
+        obs.add(`${bot.snake[i].x},${bot.snake[i].y}`);
+      }
+
       let target = null;
       let nearestDist = Infinity;
-
       for (const f of soloFoods) {
         const dist = Math.abs(f.x - head.x) + Math.abs(f.y - head.y);
         if (dist < nearestDist) { nearestDist = dist; target = f; }
       }
       for (const pu of soloPowerups) {
         const dist = Math.abs(pu.x - head.x) + Math.abs(pu.y - head.y);
-        if (dist < 8 && dist < nearestDist) { nearestDist = dist; target = { x: pu.x, y: pu.y }; }
+        if (dist < 10 && dist < nearestDist) { nearestDist = dist; target = { x: pu.x, y: pu.y }; }
       }
 
       const directions = [
         { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
       ];
 
-      if (target) {
-        directions.sort((a, b) => {
-          const dA = Math.abs(target.x - (head.x + a.x)) + Math.abs(target.y - (head.y + a.y));
-          const dB = Math.abs(target.x - (head.x + b.x)) + Math.abs(target.y - (head.y + b.y));
-          return dA - dB;
-        });
+      // Flood fill for solo bot
+      function soloFlood(sx, sy) {
+        const visited = new Set();
+        const queue = [{ x: sx, y: sy }];
+        visited.add(`${sx},${sy}`);
+        let count = 0;
+        while (queue.length > 0 && count < 60) {
+          const pos = queue.shift();
+          count++;
+          for (const [ddx, ddy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            let nx = pos.x + ddx, ny = pos.y + ddy;
+            if (soloWrapMode) { nx = (nx + GRID) % GRID; ny = (ny + GRID) % GRID; }
+            if (!soloWrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) continue;
+            const key = `${nx},${ny}`;
+            if (visited.has(key) || obs.has(key)) continue;
+            visited.add(key);
+            queue.push({ x: nx, y: ny });
+          }
+        }
+        return count;
       }
 
-      if (Math.random() < 0.1) {
-        const i = Math.floor(Math.random() * 2);
-        const tmp = directions[0]; directions[0] = directions[i]; directions[i] = tmp;
-      }
+      let bestDir = null;
+      let bestScore = -Infinity;
 
       for (const d of directions) {
         if (d.x === -dir.x && d.y === -dir.y) continue;
-        const newHead = { x: head.x + d.x, y: head.y + d.y };
-        if (!soloWrapMode && (newHead.x < 0 || newHead.x >= GRID || newHead.y < 0 || newHead.y >= GRID)) {
+        let nx = head.x + d.x, ny = head.y + d.y;
+        if (soloWrapMode) { nx = (nx + GRID) % GRID; ny = (ny + GRID) % GRID; }
+        if (!soloWrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) {
           if (bot.buffs.invincible <= 0) continue;
         }
-        if (soloWrapMode) {
-          newHead.x = (newHead.x + GRID) % GRID;
-          newHead.y = (newHead.y + GRID) % GRID;
-        }
-        if (soloSnake.some(s => s.x === newHead.x && s.y === newHead.y)) {
-          if (bot.buffs.invincible <= 0) continue;
-        }
-        let blocked = false;
-        for (const other of soloBots) {
-          if (other.id === bot.id || !other.alive) continue;
-          if (other.snake.some(s => s.x === newHead.x && s.y === newHead.y)) { blocked = true; break; }
-        }
-        if (blocked) continue;
-        bot.nextDirection = { ...d };
-        return;
+        const key = `${nx},${ny}`;
+        if (obs.has(key)) { if (bot.buffs.invincible <= 0) continue; }
+
+        const space = soloFlood(nx, ny);
+        if (space < bot.snake.length && bot.buffs.invincible <= 0) continue;
+
+        const distToTarget = target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 999;
+        const score = space * 10 - distToTarget + Math.random() * 3;
+        if (score > bestScore) { bestScore = score; bestDir = d; }
       }
+
+      if (bestDir) { bot.nextDirection = { ...bestDir }; return; }
+
       for (const d of directions) {
         if (d.x === -dir.x && d.y === -dir.y) continue;
-        bot.nextDirection = { ...d };
-        return;
+        bot.nextDirection = { ...d }; return;
       }
     }
 

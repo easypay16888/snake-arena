@@ -125,11 +125,49 @@ function initGame() {
 const BOT_NAMES = ['机器人🤖', 'AI蛇🐍', 'Bot🎯', '电脑💀'];
 const BOT_COLORS = ['#ff4444', '#44aaff', '#ffaa00', '#aa44ff'];
 
+function buildObstacleSet(exclude) {
+  const obs = new Set();
+  for (const p of players) {
+    if (!p.alive) continue;
+    const body = p.snake;
+    const len = body.length;
+    for (let i = 0; i < len; i++) {
+      // Skip last segment of self (tail will move away) unless about to eat
+      if (p === exclude && i === len - 1) continue;
+      obs.add(`${body[i].x},${body[i].y}`);
+    }
+  }
+  return obs;
+}
+
+function floodFill(sx, sy, obstacles) {
+  const visited = new Set();
+  const queue = [{ x: sx, y: sy }];
+  visited.add(`${sx},${sy}`);
+  let count = 0;
+  while (queue.length > 0 && count < 80) {
+    const pos = queue.shift();
+    count++;
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      let nx = pos.x + dx;
+      let ny = pos.y + dy;
+      if (wrapMode) { nx = (nx + GRID) % GRID; ny = (ny + GRID) % GRID; }
+      if (!wrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) continue;
+      const key = `${nx},${ny}`;
+      if (visited.has(key) || obstacles.has(key)) continue;
+      visited.add(key);
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  return count;
+}
+
 function calculateBotDirection(p) {
   if (!p.alive || !p.isBot) return;
 
   const head = p.snake[0];
   const dir = p.direction;
+  const obstacles = buildObstacleSet(p);
 
   let target = null;
   let nearestDist = Infinity;
@@ -140,75 +178,57 @@ function calculateBotDirection(p) {
   }
   for (const pu of powerups) {
     const dist = Math.abs(pu.x - head.x) + Math.abs(pu.y - head.y);
-    if (dist < 8 && dist < nearestDist) { nearestDist = dist; target = pu; }
+    if (dist < 10 && dist < nearestDist) { nearestDist = dist; target = pu; }
   }
 
   const directions = [
     { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
   ];
 
-  if (target) {
-    const dx = target.x - head.x;
-    const dy = target.y - head.y;
-    directions.sort((a, b) => {
-      const dA = Math.abs(target.x - (head.x + a.x)) + Math.abs(target.y - (head.y + a.y));
-      const dB = Math.abs(target.x - (head.x + b.x)) + Math.abs(target.y - (head.y + b.y));
-      return dA - dB;
-    });
-  }
-
-  // Shuffle first two directions occasionally for less predictable movement
-  if (Math.random() < 0.1) {
-    const i = Math.floor(Math.random() * 2);
-    const tmp = directions[0]; directions[0] = directions[i]; directions[i] = tmp;
-  }
+  // Score each direction: flood fill space + proximity to food
+  let bestDir = null;
+  let bestScore = -Infinity;
 
   for (const d of directions) {
     if (d.x === -dir.x && d.y === -dir.y) continue;
 
-    const newHead = { x: head.x + d.x, y: head.y + d.y };
-    if (!wrapMode && (newHead.x < 0 || newHead.x >= GRID || newHead.y < 0 || newHead.y >= GRID)) {
-      if (p.buffs.invincible <= 0) continue;
-    }
-    if (wrapMode) {
-      newHead.x = (newHead.x + GRID) % GRID;
-      newHead.y = (newHead.y + GRID) % GRID;
-    }
+    const nx = wrapMode ? ((head.x + d.x) + GRID) % GRID : head.x + d.x;
+    const ny = wrapMode ? ((head.y + d.y) + GRID) % GRID : head.y + d.y;
 
-    // Check self collision
-    if (p.snake.some(s => s.x === newHead.x && s.y === newHead.y)) {
+    if (!wrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) {
       if (p.buffs.invincible <= 0) continue;
     }
 
-    // Check other snake collision
-    let blocked = false;
-    for (const other of players) {
-      if (other.id === p.id || !other.alive) continue;
-      if (other.snake.some(s => s.x === newHead.x && s.y === newHead.y)) {
-        blocked = true; break;
-      }
+    const key = `${nx},${ny}`;
+    if (obstacles.has(key)) {
+      if (p.buffs.invincible <= 0) continue;
     }
-    if (blocked) continue;
 
-    // Look ahead: check if the move leads to a dead end (all 3 forward directions blocked)
-    const ahead = { x: newHead.x + d.x, y: newHead.y + d.y };
-    if (wrapMode) {
-      ahead.x = (ahead.x + GRID) % GRID;
-      ahead.y = (ahead.y + GRID) % GRID;
+    // Flood fill to measure how much open space this direction leads to
+    const space = floodFill(nx, ny, obstacles);
+    if (space < p.snake.length && p.buffs.invincible <= 0) continue; // Avoid tight spaces
+
+    const distToTarget = target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 999;
+    // Prefer: more open space + closer to food + slight randomness
+    const score = space * 10 - distToTarget + Math.random() * 3;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestDir = d;
     }
-    const aheadBlocked = (!wrapMode && (ahead.x < 0 || ahead.x >= GRID || ahead.y < 0 || ahead.y >= GRID)) ||
-      p.snake.some(s => s.x === ahead.x && s.y === ahead.y) ||
-      players.some(o => o.id !== p.id && o.alive && o.snake.some(s => s.x === ahead.x && s.y === ahead.y));
-    // Slight penalty for moves that lead to dead ends, but still accept if only option
-    if (aheadBlocked && Math.random() < 0.7) continue;
+  }
 
-    p.nextDirection = { ...d };
+  if (bestDir) {
+    p.nextDirection = { ...bestDir };
     return;
   }
 
-  // Fallback: pick any non-reverse direction
+  // Fallback: pick direction with most space
   for (const d of directions) {
     if (d.x === -dir.x && d.y === -dir.y) continue;
+    const nx = wrapMode ? ((head.x + d.x) + GRID) % GRID : head.x + d.x;
+    const ny = wrapMode ? ((head.y + d.y) + GRID) % GRID : head.y + d.y;
+    if (!wrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) continue;
     p.nextDirection = { ...d };
     return;
   }
