@@ -1558,7 +1558,7 @@
           obs.add(`${other.snake[i].x},${other.snake[i].y}`);
         }
       }
-      // Self body (skip tail)
+      // Self body (skip head[0] and tail[len-1])
       for (let i = 1; i < bot.snake.length - 1; i++) {
         obs.add(`${bot.snake[i].x},${bot.snake[i].y}`);
       }
@@ -1584,7 +1584,7 @@
         const queue = [{ x: sx, y: sy }];
         visited.add(`${sx},${sy}`);
         let count = 0;
-        while (queue.length > 0 && count < 60) {
+        while (queue.length > 0 && count < 80) {
           const pos = queue.shift();
           count++;
           for (const [ddx, ddy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
@@ -1614,10 +1614,9 @@
         if (obs.has(key)) { if (bot.buffs.invincible <= 0) continue; }
 
         const space = soloFlood(nx, ny);
-        if (space < bot.snake.length && bot.buffs.invincible <= 0) continue;
-
         const distToTarget = target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 999;
-        const score = space * 10 - distToTarget + Math.random() * 3;
+        const spacePenalty = space < bot.snake.length ? -500 : 0;
+        const score = space * 10 - distToTarget + spacePenalty + Math.random() * 3;
         if (score > bestScore) { bestScore = score; bestDir = d; }
       }
 
@@ -1639,7 +1638,9 @@
         else { return { dir: d, ate: false, died: true }; }
       }
 
-      if (snake.some(s => s.x === head.x && s.y === head.y)) {
+      const willEat = soloFoods.some(f => f.x === head.x && f.y === head.y);
+      const checkBody = willEat ? snake : snake.slice(0, -1);
+      if (checkBody.some(s => s.x === head.x && s.y === head.y)) {
         if (buffs.invincible <= 0) { return { dir: d, ate: false, died: true }; }
         return { dir: d, ate: false, died: false };
       }
@@ -1846,7 +1847,9 @@
           else { soloAlive = false; playDeathSFX(); endSoloGame('collision'); return; }
         }
 
-        if (soloSnake.some(s => s.x === head.x && s.y === head.y)) {
+        const soloWillEat = soloFoods.some(f => f.x === head.x && f.y === head.y);
+        const soloCheckBody = soloWillEat ? soloSnake : soloSnake.slice(0, -1);
+        if (soloCheckBody.some(s => s.x === head.x && s.y === head.y)) {
           if (soloBuffs.invincible > 0) { soloTickAccum = 0; break; }
           soloAlive = false; playDeathSFX(); endSoloGame('collision'); return;
         }
@@ -1900,8 +1903,15 @@
             if (gameWrapMode) { bHead.x = (bHead.x + GRID) % GRID; bHead.y = (bHead.y + GRID) % GRID; }
             else { bot.alive = false; break; }
           }
-          if (bot.alive && bot.snake.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
-          if (bot.alive && soloSnake.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
+          if (bot.alive) {
+            const bWillEat = soloFoods.some(f => f.x === bHead.x && f.y === bHead.y);
+            const bCheckSelf = bWillEat ? bot.snake : bot.snake.slice(0, -1);
+            if (bCheckSelf.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
+          }
+          if (bot.alive) {
+            const pCheckBody = soloSnake.slice(0, -1); // skip player tail
+            if (pCheckBody.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
+          }
           if (!bot.alive) break;
 
           bot.snake.unshift(bHead);

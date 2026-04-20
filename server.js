@@ -206,11 +206,11 @@ function calculateBotDirection(p) {
 
     // Flood fill to measure how much open space this direction leads to
     const space = floodFill(nx, ny, obstacles);
-    if (space < p.snake.length && p.buffs.invincible <= 0) continue; // Avoid tight spaces
 
     const distToTarget = target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 999;
-    // Prefer: more open space + closer to food + slight randomness
-    const score = space * 10 - distToTarget + Math.random() * 3;
+    // Heavy penalty for tight spaces, but still pickable if all else fails
+    const spacePenalty = space < p.snake.length ? -500 : 0;
+    const score = space * 10 - distToTarget + spacePenalty + Math.random() * 3;
 
     if (score > bestScore) {
       bestScore = score;
@@ -259,7 +259,10 @@ function moveSnake(p) {
     }
   }
 
-  if (p.snake.some(s => s.x === head.x && s.y === head.y)) {
+  // Self-collision: skip tail if no food at head (tail will move away)
+  const willEat = foods.some(f => f.x === head.x && f.y === head.y);
+  const checkBody = willEat ? p.snake : p.snake.slice(0, -1);
+  if (checkBody.some(s => s.x === head.x && s.y === head.y)) {
     if (p.buffs.invincible > 0) return;
     p.alive = false;
     return;
