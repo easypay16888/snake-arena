@@ -386,7 +386,7 @@
 </head>
 <body>
   <div class="star-field" id="starField"></div>
-  <button class="music-toggle" id="musicToggle" onclick="toggleMusic()" title="音乐开关">🔊</button>
+  <button class="music-toggle" id="musicToggle" onclick="initAudio();if(!musicScheduler)startMusic();toggleMusic()" title="音乐开关">🔊</button>
 
   <!-- Connect Screen -->
   <div id="connectScreen" class="screen active">
@@ -2046,11 +2046,15 @@
         if (audioCtx.state === 'suspended') audioCtx.resume();
         return;
       }
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      masterGain = audioCtx.createGain();
-      masterGain.gain.value = 0.35;
-      masterGain.connect(audioCtx.destination);
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.35;
+        masterGain.connect(audioCtx.destination);
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch(e) {
+        audioCtx = null;
+      }
     }
 
     function toggleMusic() {
@@ -2342,14 +2346,10 @@
     function startMusic() {
       initAudio();
       if (!audioCtx) return;
+      // Resume synchronously - this works because initAudio was called
+      // from a user gesture (click), so the browser allows it
       if (audioCtx.state === 'suspended') {
-        audioCtx.resume().then(() => {
-          nextNoteTime = audioCtx.currentTime;
-          currentBeat = 0;
-          if (musicScheduler) clearInterval(musicScheduler);
-          musicScheduler = setInterval(scheduleBeat, 25);
-        });
-        return;
+        audioCtx.resume();
       }
       nextNoteTime = audioCtx.currentTime;
       currentBeat = 0;
