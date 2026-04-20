@@ -183,7 +183,23 @@
     .rank-row:nth-child(2) .rank-num { color: #c0c0c0; }
     .rank-row:nth-child(3) .rank-num { color: #cd7f32; }
 
+    .respawn-overlay {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(5,5,16,0.92); border: 1px solid rgba(255,110,196,0.6);
+      border-radius: 14px; padding: 1.5rem 2rem; text-align: center;
+      z-index: 15; display: none;
+      box-shadow: 0 0 40px rgba(255,110,196,0.3);
+      animation: fadeIn 0.4s ease;
+    }
+    .respawn-overlay.show { display: block; }
+    .respawn-overlay h3 { font-size: 1.2rem; color: #ff6ec4; margin-bottom: 0.5rem; }
+    .respawn-overlay .countdown { font-size: 2.5rem; color: #00ffcc; font-weight: bold; text-shadow: 0 0 15px rgba(0,255,204,0.5); }
     .controls-hint { margin-top: 0.8rem; font-size: 0.78rem; color: #555; letter-spacing: 0.08em; }
+    .immortal-badge {
+      display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
+      background: rgba(255,110,196,0.2); border: 1px solid rgba(255,110,196,0.5);
+      color: #ff6ec4; font-size: 0.72rem; margin-left: 0.4rem; letter-spacing: 0.05em;
+    }
 
     .music-toggle {
       position: fixed; top: 12px; right: 12px; z-index: 100;
@@ -379,8 +395,9 @@
       <p style="margin-bottom:0.5rem;color:#aaa;font-size:0.9rem;">局域网对战贪吃蛇</p>
       <input type="text" id="nameInput" placeholder="输入你的名字" maxlength="10">
       <div style="margin:1.2rem 0 0.5rem;color:#777;font-size:0.8rem;">服务器地址</div>
-      <input type="text" id="hostInput" placeholder="192.168.x.x:3000">
+      <input type="text" id="hostInput" placeholder="192.168.x.x:8088">
       <button class="btn" id="connectBtn" onclick="doConnect()">多人连线</button>
+      <button class="btn" id="quickBtn" onclick="quickConnect()" style="display:none;margin-top:0.5rem;background:linear-gradient(135deg,rgba(255,110,196,0.3),rgba(123,104,238,0.25));border-color:rgba(255,110,196,0.5);">快速重连</button>
       <div style="margin:0.8rem 0;color:#444;font-size:0.8rem;">—— 或者 ——</div>
       <button class="btn" id="soloBtn" onclick="startSoloMode()">单人模式</button>
       <div class="status-msg" id="connectStatus"></div>
@@ -409,6 +426,19 @@
         <option value="0">无限</option>
       </select>
     </div>
+    <div class="mode-toggle" id="soloBotToggle">
+      <span class="label">🤖 机器人对手</span>
+      <div class="switch" id="soloBotSwitch" onclick="soloBotEnabled=!soloBotEnabled;updateSoloSetup()"></div>
+      <span id="soloBotLabel" style="font-size:0.78rem;color:#555;">关闭</span>
+    </div>
+    <div class="mode-toggle" id="soloBotCountToggle" style="display:none;">
+      <span class="label">机器人数量</span>
+      <select id="soloBotCount" style="background:rgba(123,104,238,0.15);border:1px solid rgba(123,104,238,0.4);border-radius:6px;color:#e0e0ff;padding:0.3rem 0.6rem;font-size:0.9rem;font-family:inherit;">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
     <div style="margin-top:1rem;">
       <button class="btn" onclick="launchSolo()">开始游戏</button>
       <button class="btn danger" style="margin-left:0.5rem;" onclick="showScreen('connectScreen')">返回</button>
@@ -431,6 +461,25 @@
       <span class="label">穿墙模式</span>
       <div class="switch" id="wrapSwitch" onclick="toggleWrap()"></div>
       <span id="wrapLabel" style="font-size:0.78rem;color:#555;">撞墙即死</span>
+    </div>
+    <div class="mode-toggle" id="immortalToggle">
+      <span class="label">永生模式</span>
+      <div class="switch" id="immortalSwitch" onclick="toggleImmortal()"></div>
+      <span id="immortalLabel" style="font-size:0.78rem;color:#555;">死亡即终</span>
+    </div>
+    <div class="mode-toggle" id="matchTimeToggle">
+      <span class="label">时长</span>
+      <select id="matchTimeSelect" style="background:rgba(123,104,238,0.15);border:1px solid rgba(123,104,238,0.4);border-radius:6px;color:#e0e0ff;padding:0.3rem 0.6rem;font-size:0.9rem;font-family:inherit;">
+        <option value="60">60秒</option>
+        <option value="120" selected>120秒</option>
+        <option value="180">180秒</option>
+        <option value="0">无限</option>
+      </select>
+    </div>
+    <div class="mode-toggle" id="botToggle" style="display:flex;">
+      <span class="label">🤖 机器人</span>
+      <button class="btn" style="padding:0.3rem 0.8rem;font-size:0.8rem;" onclick="addBot()">添加</button>
+      <button class="btn danger" style="padding:0.3rem 0.8rem;font-size:0.8rem;margin-left:0.3rem;" onclick="removeBot()">移除</button>
     </div>
     <div class="player-list" id="playerList"></div>
     <div class="lobby-buttons">
@@ -456,6 +505,10 @@
     <div class="buff-bar" id="buffBar"></div>
     <div style="position:relative;">
       <canvas id="gameCanvas" width="1000" height="1000"></canvas>
+      <div class="respawn-overlay" id="respawnOverlay">
+        <h3>复活中...</h3>
+        <div class="countdown" id="respawnCountdown">3</div>
+      </div>
       <div class="revive-dialog" id="reviveDialog">
         <h3>💀 你挂了!</h3>
         <p>看广告复活一次，保留当前分数和长度</p>
@@ -592,17 +645,40 @@
     let gamePowerups = [];
     let gameTimer = 120;
     let gameWrapMode = false;
+    let gameImmortalMode = false;
+    let gameMatchTime = 120;
+    let respawnTimers = {};
     let frameCount = 0;
     let isSoloMode = false;
     let soloWrapMode = false;
 
-    // --- Auto-detect server ---
+    // --- Auto-detect server & restore name ---
     (function() {
+      const saved = localStorage.getItem('snakeArenaProfile');
+      if (saved) {
+        try {
+          const profile = JSON.parse(saved);
+          if (profile.name) document.getElementById('nameInput').value = profile.name;
+          if (profile.host) document.getElementById('hostInput').value = profile.host;
+          if (profile.name && profile.host) {
+            document.getElementById('quickBtn').style.display = 'inline-block';
+          }
+          return;
+        } catch {}
+      }
       const host = window.location.host;
       if (host && host !== '') {
         document.getElementById('hostInput').value = host;
       }
     })();
+
+    function saveProfile(name, host) {
+      localStorage.setItem('snakeArenaProfile', JSON.stringify({ name, host }));
+    }
+
+    function quickConnect() {
+      doConnect();
+    }
 
     // --- Screen management ---
     function showScreen(id) {
@@ -624,6 +700,7 @@
 
     // --- Connect ---
     function doConnect() {
+      isSoloMode = false;
       const name = document.getElementById('nameInput').value.trim() || 'Player';
       const host = document.getElementById('hostInput').value.trim();
       if (!host) {
@@ -646,7 +723,8 @@
 
       ws.onopen = () => {
         myName = name;
-        ws.send(JSON.stringify({ type: 'join', name }));
+        saveProfile(name, host);
+        ws.send(JSON.stringify({ type: 'join', name, color: getSnakeColor() }));
         document.getElementById('connectStatus').textContent = '';
       };
 
@@ -680,11 +758,16 @@
         case 'lobby':
           lobbyPlayers = msg.players;
           gameWrapMode = msg.wrapMode || false;
+          gameImmortalMode = msg.immortalMode || false;
+          gameMatchTime = msg.matchTime || 120;
           renderLobby();
           break;
 
         case 'countdown':
           showCountdown(msg.value);
+          // Hide respawn overlay on new game countdown
+          document.getElementById('respawnOverlay').classList.remove('show');
+          if (respawnTimers.visual) { clearInterval(respawnTimers.visual); respawnTimers.visual = null; }
           break;
 
         case 'state':
@@ -693,6 +776,7 @@
           gamePowerups = msg.powerups || [];
           gameTimer = msg.timer;
           gameWrapMode = msg.wrapMode || false;
+          gameImmortalMode = msg.immortalMode || false;
           document.getElementById('countdownOverlay').classList.remove('show');
           if (document.getElementById('gameScreen').classList.contains('active')) {
             updateHud();
@@ -721,6 +805,13 @@
           setMusicState('lobby');
           showScreen('lobbyScreen');
           break;
+
+        case 'respawn':
+          if (msg.id === myId) {
+            // My snake is respawning - show countdown overlay
+            showRespawnCountdown(3);
+          }
+          break;
       }
     }
 
@@ -733,11 +824,11 @@
 
       pl.innerHTML = lobbyPlayers.map(p => {
         const tagClass = p.host ? 'host' : (p.ready ? 'ready' : 'waiting');
-        const tagText = p.host ? '房主' : (p.ready ? '已准备' : '等待中');
+        const tagText = p.isBot ? '🤖' : (p.host ? '房主' : (p.ready ? '已准备' : '等待中'));
         return `<div class="player-row">
           <div class="player-dot" style="background:${p.color};color:${p.color};"></div>
-          <span class="player-name">${escHtml(p.name)}</span>
-          <span class="player-tag ${tagClass}">${tagText}</span>
+          <span class="player-name">${escHtml(p.name)}${p.isBot ? '' : ''}</span>
+          <span class="player-tag ${p.isBot ? 'ready' : tagClass}">${tagText}</span>
         </div>`;
       }).join('');
 
@@ -769,12 +860,61 @@
         wl.style.color = '#555';
       }
       mt.style.display = isHost ? 'flex' : 'flex';
+
+      // Immortal mode toggle
+      const isw = document.getElementById('immortalSwitch');
+      const il = document.getElementById('immortalLabel');
+      const it = document.getElementById('immortalToggle');
+      if (gameImmortalMode) {
+        isw.classList.add('on');
+        il.textContent = '死亡复活';
+        il.style.color = '#ff6ec4';
+      } else {
+        isw.classList.remove('on');
+        il.textContent = '死亡即终';
+        il.style.color = '#555';
+      }
+      it.style.display = 'flex';
+
+      // Match time selector (host only)
+      const mtSelect = document.getElementById('matchTimeSelect');
+      const mtToggle = document.getElementById('matchTimeToggle');
+      if (isHost) {
+        mtSelect.value = String(gameMatchTime);
+        mtToggle.style.display = 'flex';
+      } else {
+        mtToggle.style.display = 'none';
+      }
+
+      // Bot buttons (host only)
+      const botToggle = document.getElementById('botToggle');
+      botToggle.style.display = isHost ? 'flex' : 'none';
     }
 
     function toggleWrap() {
       if (!ws) return;
       ws.send(JSON.stringify({ type: 'toggleWrap' }));
     }
+
+    function toggleImmortal() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'toggleImmortal' }));
+    }
+
+    function addBot() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'addBot' }));
+    }
+
+    function removeBot() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'removeBot' }));
+    }
+
+    document.getElementById('matchTimeSelect').addEventListener('change', function() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'setMatchTime', time: this.value }));
+    });
 
     function toggleReady() {
       if (ws) ws.send(JSON.stringify({ type: 'ready' }));
@@ -799,26 +939,58 @@
       }
     }
 
+    // --- Respawn countdown (immortal mode) ---
+    function showRespawnCountdown(seconds) {
+      const overlay = document.getElementById('respawnOverlay');
+      const numEl = document.getElementById('respawnCountdown');
+      overlay.classList.add('show');
+      let remaining = seconds;
+      numEl.textContent = remaining;
+
+      // Clear any existing respawn timer
+      if (respawnTimers.visual) clearInterval(respawnTimers.visual);
+
+      respawnTimers.visual = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(respawnTimers.visual);
+          overlay.classList.remove('show');
+        } else {
+          numEl.textContent = remaining;
+        }
+      }, 1000);
+    }
+
     // --- Game HUD ---
     function updateHud() {
       const hud = document.getElementById('gameHud');
       const timerClass = gameTimer <= 10 ? 'timer urgent' : 'timer';
-      const mins = Math.floor(gameTimer / 60);
-      const secs = gameTimer % 60;
-      const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+      let timeStr;
+      if (gameTimer === 0 || (isSoloMode && soloMaxTime === 0)) {
+        timeStr = '∞';
+      } else {
+        const mins = Math.floor(gameTimer / 60);
+        const secs = gameTimer % 60;
+        timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+      }
 
       let html = `<div class="hud-item ${timerClass}">${timeStr}</div>`;
+      if (gameImmortalMode && !isSoloMode) {
+        html += `<span class="immortal-badge">永生模式</span>`;
+      }
       gameSnakes.forEach(s => {
+        const len = s.snake ? s.snake.length : 0;
+        const spdMult = Math.min(1 + Math.max(0, len - 3) * 0.04, 2.5);
+        let speed = spdMult;
+        if (s.buffs) {
+          if (s.buffs.speedUp > 0) speed *= 1.8;
+          if (s.buffs.speedDown > 0) speed *= 0.5;
+        }
+        const speedStr = speed >= 10 ? speed.toFixed(0) : speed.toFixed(1);
         if (s.alive) {
-          const len = s.snake ? s.snake.length : 0;
-          const spdMult = Math.min(1 + Math.max(0, len - 3) * 0.04, 2.5);
-          let speed = spdMult;
-          if (s.buffs) {
-            if (s.buffs.speedUp > 0) speed *= 1.8;
-            if (s.buffs.speedDown > 0) speed *= 0.5;
-          }
-          const speedStr = speed >= 10 ? speed.toFixed(0) : speed.toFixed(1);
           html += `<div class="hud-item"><span class="hud-dot" style="background:${s.color};box-shadow:0 0 6px ${s.color};"></span>${escHtml(s.name)} <span class="hud-score">${s.score}</span><span style="color:#aaa;font-size:0.75rem;margin-left:0.3rem;">⚡${speedStr}x</span></div>`;
+        } else if (gameImmortalMode && !isSoloMode) {
+          html += `<div class="hud-item" style="opacity:0.5;"><span class="hud-dot" style="background:${s.color};box-shadow:0 0 6px ${s.color};opacity:0.4;"></span>${escHtml(s.name)} <span class="hud-score">${s.score}</span><span style="color:#ff6ec4;font-size:0.75rem;margin-left:0.3rem;">复活中</span></div>`;
         }
       });
       hud.innerHTML = html;
@@ -843,8 +1015,8 @@
       }
 
       document.getElementById('controlsHint').textContent = gameWrapMode
-        ? '方向键/WASD | +10分 | 穿墙 | 蛇越长越快' + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛')
-        : '方向键/WASD | +10分 | 撞墙即死 | 蛇越长越快' + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛');
+        ? '方向键/WASD | +10分 | 穿墙 | 蛇越长越快' + (gameImmortalMode && !isSoloMode ? ' | 永生模式' : '') + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛') + (soloBots.length > 0 ? ' | 🤖×' + soloBots.length : '')
+        : '方向键/WASD | +10分 | 撞墙即死 | 蛇越长越快' + (gameImmortalMode && !isSoloMode ? ' | 永生模式' : '') + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛') + (soloBots.length > 0 ? ' | 🤖×' + soloBots.length : '');
     }
 
     // --- Particles ---
@@ -1028,19 +1200,21 @@
 
     function drawSnake(player) {
       const { snake, direction: dir } = player;
-      const skin = SKINS.find(s => s.id === currentSkin) || SKINS[0];
+      const isMe = player.id === myId;
+      const skin = isMe ? (SKINS.find(s => s.id === currentSkin) || SKINS[0]) : SKINS[0];
       const isMultiColor = skin.colors.length > 2;
       const len = snake.length;
       if (len === 0) return;
 
       function getSegColor(idx) {
+        if (!isMe) return player.color;
         if (isMultiColor) {
           return skin.colors[idx % skin.colors.length];
         }
         return skin.colors[0];
       }
 
-      const color = isMultiColor ? skin.colors[0] : skin.colors[0];
+      const color = isMe ? (isMultiColor ? skin.colors[0] : skin.colors[0]) : player.color;
 
       // Body glow line — break at wrap points to avoid ghost lines
       if (len > 1) {
@@ -1221,6 +1395,9 @@
 
     // --- Input ---
     document.addEventListener('keydown', (e) => {
+      // 输入框聚焦时不拦截方向键
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       let dx = 0, dy = 0;
       switch(e.key) {
         case 'ArrowUp': case 'w': case 'W': dy = -1; break;
@@ -1331,11 +1508,182 @@
     const SOLO_LENGTH_SPEED_FACTOR = 0.04;
     const SOLO_MAX_LENGTH_SPEED = 2.5;
 
+    // --- Solo Bot AI ---
+    let soloBots = [];
+
+    function createSoloBot(idx, total) {
+      const mid = Math.floor(GRID / 2);
+      const startPositions = [
+        { x: GRID - 4, y: mid, dx: -1, dy: 0 },
+        { x: 4, y: 4, dx: 1, dy: 0 },
+        { x: GRID - 4, y: 4, dx: -1, dy: 0 },
+      ];
+      const pos = startPositions[idx % startPositions.length];
+      const colors = ['#ff4444', '#44aaff', '#ffaa00'];
+      const names = ['🤖Alpha', '🤖Beta', '🤖Gamma'];
+      return {
+        id: 'bot' + idx,
+        name: names[idx % names.length],
+        color: colors[idx % colors.length],
+        snake: [
+          { x: pos.x, y: pos.y },
+          { x: pos.x - pos.dx, y: pos.y },
+          { x: pos.x - pos.dx * 2, y: pos.y },
+        ],
+        direction: { x: pos.dx, y: pos.dy },
+        nextDirection: { x: pos.dx, y: pos.dy },
+        score: 0,
+        alive: true,
+        buffs: { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 },
+        tickAccum: 0,
+      };
+    }
+
+    function calculateSoloBotDirection(bot) {
+      if (!bot.alive) return;
+      const head = bot.snake[0];
+      const dir = bot.direction;
+
+      let target = null;
+      let nearestDist = Infinity;
+
+      for (const f of soloFoods) {
+        const dist = Math.abs(f.x - head.x) + Math.abs(f.y - head.y);
+        if (dist < nearestDist) { nearestDist = dist; target = f; }
+      }
+      for (const pu of soloPowerups) {
+        const dist = Math.abs(pu.x - head.x) + Math.abs(pu.y - head.y);
+        if (dist < 8 && dist < nearestDist) { nearestDist = dist; target = { x: pu.x, y: pu.y }; }
+      }
+
+      const directions = [
+        { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
+      ];
+
+      if (target) {
+        directions.sort((a, b) => {
+          const dA = Math.abs(target.x - (head.x + a.x)) + Math.abs(target.y - (head.y + a.y));
+          const dB = Math.abs(target.x - (head.x + b.x)) + Math.abs(target.y - (head.y + b.y));
+          return dA - dB;
+        });
+      }
+
+      if (Math.random() < 0.1) {
+        const i = Math.floor(Math.random() * 2);
+        const tmp = directions[0]; directions[0] = directions[i]; directions[i] = tmp;
+      }
+
+      for (const d of directions) {
+        if (d.x === -dir.x && d.y === -dir.y) continue;
+        const newHead = { x: head.x + d.x, y: head.y + d.y };
+        if (!soloWrapMode && (newHead.x < 0 || newHead.x >= GRID || newHead.y < 0 || newHead.y >= GRID)) {
+          if (bot.buffs.invincible <= 0) continue;
+        }
+        if (soloWrapMode) {
+          newHead.x = (newHead.x + GRID) % GRID;
+          newHead.y = (newHead.y + GRID) % GRID;
+        }
+        if (soloSnake.some(s => s.x === newHead.x && s.y === newHead.y)) {
+          if (bot.buffs.invincible <= 0) continue;
+        }
+        let blocked = false;
+        for (const other of soloBots) {
+          if (other.id === bot.id || !other.alive) continue;
+          if (other.snake.some(s => s.x === newHead.x && s.y === newHead.y)) { blocked = true; break; }
+        }
+        if (blocked) continue;
+        bot.nextDirection = { ...d };
+        return;
+      }
+      for (const d of directions) {
+        if (d.x === -dir.x && d.y === -dir.y) continue;
+        bot.nextDirection = { ...d };
+        return;
+      }
+    }
+
+    function moveSoloSnake(snake, dir, nextDir, buffs, wrapModeOn) {
+      const d = { ...nextDir };
+      const head = { x: snake[0].x + d.x, y: snake[0].y + d.y };
+
+      if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) {
+        if (wrapModeOn) { head.x = (head.x + GRID) % GRID; head.y = (head.y + GRID) % GRID; }
+        else if (buffs.invincible > 0) { return { dir: { x: -d.x, y: -d.y }, ate: false, died: false }; }
+        else { return { dir: d, ate: false, died: true }; }
+      }
+
+      if (snake.some(s => s.x === head.x && s.y === head.y)) {
+        if (buffs.invincible <= 0) { return { dir: d, ate: false, died: true }; }
+        return { dir: d, ate: false, died: false };
+      }
+
+      snake.unshift(head);
+      let ate = false;
+      const fi = soloFoods.findIndex(f => f.x === head.x && f.y === head.y);
+      if (fi !== -1) {
+        const gain = buffs.double > 0 ? 20 : 10;
+        // Return gain info separately
+        snake.score = (snake.score || 0) + gain;
+        soloFoods.splice(fi, 1);
+        spawnSoloFood();
+        ate = true;
+      }
+      if (!ate && buffs.magnet > 0 && snake.length > 1) {
+        const oldHead = snake[1];
+        const mi = soloFoods.findIndex(f => f.x === oldHead.x && f.y === oldHead.y);
+        if (mi !== -1) {
+          const gain = buffs.double > 0 ? 20 : 10;
+          snake.score = (snake.score || 0) + gain;
+          soloFoods.splice(mi, 1);
+          spawnSoloFood();
+          ate = true;
+        }
+      }
+      if (!ate) { snake.pop(); }
+
+      const puIdx = soloPowerups.findIndex(pu => pu.x === head.x && pu.y === head.y);
+      if (puIdx !== -1) {
+        const puType = soloPowerups[puIdx].type;
+        applySoloBuff(buffs, puType);
+        soloPowerups.splice(puIdx, 1);
+      }
+
+      return { dir: d, ate, died: false };
+    }
+
+    function applySoloBuff(buffs, type) {
+      switch (type) {
+        case 'double': buffs.double = 150; break;
+        case 'speedUp': buffs.speedUp = 150; break;
+        case 'speedDown': buffs.speedDown = 150; break;
+        case 'magnet': buffs.magnet = 150; break;
+        case 'reverse': buffs.reverse = 150; break;
+        case 'invincible': buffs.invincible = 150; break;
+      }
+    }
+
+    function getSoloTickMultiplier(buffs, snakeLen) {
+      let mult = 1;
+      if (buffs.speedUp > 0) mult *= 1.8;
+      if (buffs.speedDown > 0) mult *= 0.5;
+      const lengthBonus = 1 + Math.max(0, snakeLen - 3) * SOLO_LENGTH_SPEED_FACTOR;
+      mult *= Math.min(lengthBonus, SOLO_MAX_LENGTH_SPEED);
+      return mult;
+    }
+
+    let soloBotEnabled = false;
+
     function updateSoloSetup() {
       const sw = document.getElementById('soloWrapSwitch');
       const wl = document.getElementById('soloWrapLabel');
       if (soloWrapMode) { sw.classList.add('on'); wl.textContent = '穿墙通行'; wl.style.color = '#00ffcc'; }
       else { sw.classList.remove('on'); wl.textContent = '撞墙即死'; wl.style.color = '#555'; }
+
+      const bsw = document.getElementById('soloBotSwitch');
+      const bl = document.getElementById('soloBotLabel');
+      const bcToggle = document.getElementById('soloBotCountToggle');
+      if (soloBotEnabled) { bsw.classList.add('on'); bl.textContent = '开启'; bl.style.color = '#00ffcc'; bcToggle.style.display = 'flex'; }
+      else { bsw.classList.remove('on'); bl.textContent = '关闭'; bl.style.color = '#555'; bcToggle.style.display = 'none'; }
     }
 
     function startSoloMode() {
@@ -1349,6 +1697,7 @@
 
     function launchSolo() {
       myName = document.getElementById('nameInput').value.trim() || 'Player';
+      localStorage.setItem('snakeArenaProfile', JSON.stringify({ name: myName, host: document.getElementById('hostInput').value.trim() }));
       soloMaxTime = parseInt(document.getElementById('soloTimerSelect').value);
       gameWrapMode = soloWrapMode;
       initSoloGame();
@@ -1374,8 +1723,18 @@
       soloPowerups = [];
       soloBuffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
       soloTickAccum = 0;
+
+      // Initialize bots
+      soloBots = [];
+      if (soloBotEnabled) {
+        const botCount = parseInt(document.getElementById('soloBotCount').value) || 1;
+        for (let i = 0; i < botCount; i++) {
+          soloBots.push(createSoloBot(i, botCount));
+        }
+      }
+
       for (let i = 0; i < 2; i++) spawnSoloFood();
-      gameSnakes = [{ id: 'solo', name: myName, color: '#00ffcc', snake: [...soloSnake], direction: soloDir, score: 0, alive: true, buffs: { ...soloBuffs } }];
+      gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake: [...soloSnake], direction: soloDir, score: 0, alive: true, buffs: { ...soloBuffs } }];
       gameFoods = soloFoods;
       gamePowerups = soloPowerups;
       gameTimer = soloMaxTime;
@@ -1445,68 +1804,93 @@
       // Magnet
       soloMagnetPull();
 
-      // Speed tick control
-      let mult = 1;
-      if (soloBuffs.speedUp > 0) mult *= 1.8;
-      if (soloBuffs.speedDown > 0) mult *= 0.5;
-      const lengthBonus = 1 + Math.max(0, soloSnake.length - 3) * SOLO_LENGTH_SPEED_FACTOR;
-      mult *= Math.min(lengthBonus, SOLO_MAX_LENGTH_SPEED);
+      // Player speed tick control with while loop for speedUp
+      let mult = getSoloTickMultiplier(soloBuffs, soloSnake.length);
       soloTickAccum += mult;
-      if (soloTickAccum < 1) { syncSoloState(); return; }
-      soloTickAccum -= 1;
+      let moved = false;
+      while (soloTickAccum >= 1 && soloAlive) {
+        soloTickAccum -= 1;
+        soloDir = { ...soloNextDir };
+        const head = { x: soloSnake[0].x + soloDir.x, y: soloSnake[0].y + soloDir.y };
 
-      soloDir = { ...soloNextDir };
-      const head = { x: soloSnake[0].x + soloDir.x, y: soloSnake[0].y + soloDir.y };
+        if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) {
+          if (gameWrapMode) { head.x = (head.x + GRID) % GRID; head.y = (head.y + GRID) % GRID; }
+          else if (soloBuffs.invincible > 0) { soloNextDir = { x: -soloDir.x, y: -soloDir.y }; soloTickAccum = 0; break; }
+          else { soloAlive = false; playDeathSFX(); endSoloGame('collision'); return; }
+        }
 
-      if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) {
-        if (gameWrapMode) { head.x = (head.x + GRID) % GRID; head.y = (head.y + GRID) % GRID; }
-        else if (soloBuffs.invincible > 0) { soloNextDir = { x: -soloDir.x, y: -soloDir.y }; return; }
-        else { soloAlive = false; playDeathSFX(); endSoloGame(); return; }
-      }
+        if (soloSnake.some(s => s.x === head.x && s.y === head.y)) {
+          if (soloBuffs.invincible > 0) { soloTickAccum = 0; break; }
+          soloAlive = false; playDeathSFX(); endSoloGame('collision'); return;
+        }
 
-      if (soloSnake.some(s => s.x === head.x && s.y === head.y)) {
-        if (soloBuffs.invincible > 0) return;
-        soloAlive = false; playDeathSFX(); endSoloGame(); return;
-      }
-
-      soloSnake.unshift(head);
-
-      let ate = false;
-      const fi = soloFoods.findIndex(f => f.x === head.x && f.y === head.y);
-      if (fi !== -1) {
-        const gain = soloBuffs.double > 0 ? 20 : 10;
-        soloScore += gain;
-        soloFoods.splice(fi, 1);
-        spawnSoloFood();
-        playEatSFX();
-        ate = true;
-      }
-
-      // Magnet: also eat food pulled to old head position
-      if (!ate && soloBuffs.magnet > 0 && soloSnake.length > 1) {
-        const oldHead = soloSnake[1];
-        const magnetIdx = soloFoods.findIndex(f => f.x === oldHead.x && f.y === oldHead.y);
-        if (magnetIdx !== -1) {
+        soloSnake.unshift(head);
+        let ate = false;
+        const fi = soloFoods.findIndex(f => f.x === head.x && f.y === head.y);
+        if (fi !== -1) {
           const gain = soloBuffs.double > 0 ? 20 : 10;
           soloScore += gain;
-          soloFoods.splice(magnetIdx, 1);
+          soloFoods.splice(fi, 1);
           spawnSoloFood();
           playEatSFX();
           ate = true;
         }
+        if (!ate && soloBuffs.magnet > 0 && soloSnake.length > 1) {
+          const oldHead = soloSnake[1];
+          const magnetIdx = soloFoods.findIndex(f => f.x === oldHead.x && f.y === oldHead.y);
+          if (magnetIdx !== -1) {
+            const gain = soloBuffs.double > 0 ? 20 : 10;
+            soloScore += gain;
+            soloFoods.splice(magnetIdx, 1);
+            spawnSoloFood();
+            playEatSFX();
+            ate = true;
+          }
+        }
+        if (!ate) { soloSnake.pop(); }
+
+        const puIdx = soloPowerups.findIndex(pu => pu.x === head.x && pu.y === head.y);
+        if (puIdx !== -1) {
+          applySoloPowerup(soloPowerups[puIdx].type);
+          soloPowerups.splice(puIdx, 1);
+        }
+        moved = true;
+      }
+      if (!moved) { syncSoloState(); return; }
+
+      // Bot ticks
+      for (const bot of soloBots) {
+        if (!bot.alive) continue;
+        for (const k in bot.buffs) { if (bot.buffs[k] > 0) bot.buffs[k]--; }
+        calculateSoloBotDirection(bot);
+        let botMult = getSoloTickMultiplier(bot.buffs, bot.snake.length);
+        bot.tickAccum = (bot.tickAccum || 0) + botMult;
+        while (bot.tickAccum >= 1 && bot.alive) {
+          bot.tickAccum -= 1;
+          bot.direction = { ...bot.nextDirection };
+          const bHead = { x: bot.snake[0].x + bot.direction.x, y: bot.snake[0].y + bot.direction.y };
+          if (bHead.x < 0 || bHead.x >= GRID || bHead.y < 0 || bHead.y >= GRID) {
+            if (gameWrapMode) { bHead.x = (bHead.x + GRID) % GRID; bHead.y = (bHead.y + GRID) % GRID; }
+            else { bot.alive = false; break; }
+          }
+          if (bot.alive && bot.snake.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
+          if (bot.alive && soloSnake.some(s => s.x === bHead.x && s.y === bHead.y)) { bot.alive = false; break; }
+          if (!bot.alive) break;
+
+          bot.snake.unshift(bHead);
+          let botAte = false;
+          const bfi = soloFoods.findIndex(f => f.x === bHead.x && f.y === bHead.y);
+          if (bfi !== -1) { bot.score += 10; soloFoods.splice(bfi, 1); spawnSoloFood(); botAte = true; }
+          if (!botAte) { bot.snake.pop(); }
+
+          const bpu = soloPowerups.findIndex(pu => pu.x === bHead.x && pu.y === bHead.y);
+          if (bpu !== -1) { applySoloBuff(bot.buffs, soloPowerups[bpu].type); soloPowerups.splice(bpu, 1); }
+
+          calculateSoloBotDirection(bot);
+        }
       }
 
-      if (!ate) {
-        soloSnake.pop();
-      }
-
-      const puIdx = soloPowerups.findIndex(pu => pu.x === head.x && pu.y === head.y);
-      if (puIdx !== -1) {
-        const pu = soloPowerups[puIdx];
-        applySoloPowerup(pu.type);
-        soloPowerups.splice(puIdx, 1);
-      }
-
+      // Check if all bots dead (and player alive) - bots don't end game
       syncSoloState();
     }
 
@@ -1525,7 +1909,11 @@
     }
 
     function syncSoloState() {
-      gameSnakes = [{ id: 'solo', name: myName, color: '#00ffcc', snake: [...soloSnake], direction: { ...soloDir }, score: soloScore, alive: soloAlive, buffs: { ...soloBuffs } }];
+      const snakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake: [...soloSnake], direction: { ...soloDir }, score: soloScore, alive: soloAlive, buffs: { ...soloBuffs } }];
+      for (const bot of soloBots) {
+        snakes.push({ id: bot.id, name: bot.name, color: bot.color, snake: [...bot.snake], direction: { ...bot.direction }, score: bot.score, alive: bot.alive, buffs: { ...bot.buffs } });
+      }
+      gameSnakes = snakes;
       gameFoods = soloFoods;
       gamePowerups = soloPowerups;
       updateHud();
@@ -1535,7 +1923,7 @@
       if (!soloAlive || soloMaxTime === 0) return;
       soloTimerVal--;
       gameTimer = soloTimerVal;
-      if (soloTimerVal <= 0) { soloTimerVal = 0; gameTimer = 0; endSoloGame(); }
+      if (soloTimerVal <= 0) { soloTimerVal = 0; gameTimer = 0; endSoloGame('timeout'); }
       if (soloTimerVal <= 10) setMusicState('urgent');
     }
 
@@ -1556,12 +1944,19 @@
       soloStarted = false;
     }
 
-    function endSoloGame() {
+    function endSoloGame(reason) {
       stopSoloLoop();
       setMusicState('result');
       if (audioCtx) playFanfare(audioCtx.currentTime);
       showScreen('resultScreen');
-      renderResult([{ name: myName, color: getSnakeColor(), score: soloScore, alive: soloAlive }]);
+      const heading = document.querySelector('#resultScreen h1');
+      if (heading) heading.textContent = reason === 'timeout' ? '时间到' : '比赛结束';
+      const rankings = [{ name: myName, color: getSnakeColor(), score: soloScore, alive: soloAlive }];
+      for (const bot of soloBots) {
+        rankings.push({ name: bot.name, color: bot.color, score: bot.score, alive: bot.alive });
+      }
+      rankings.sort((a, b) => b.score - a.score);
+      renderResult(rankings);
     }
 
     function requestRematch() {
@@ -1610,11 +2005,15 @@
     };
 
     function initAudio() {
-      if (audioCtx) return;
+      if (audioCtx) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return;
+      }
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       masterGain = audioCtx.createGain();
       masterGain.gain.value = 0.35;
       masterGain.connect(audioCtx.destination);
+      if (audioCtx.state === 'suspended') audioCtx.resume();
     }
 
     function toggleMusic() {
@@ -1905,7 +2304,16 @@
 
     function startMusic() {
       initAudio();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => {
+          nextNoteTime = audioCtx.currentTime;
+          currentBeat = 0;
+          if (musicScheduler) clearInterval(musicScheduler);
+          musicScheduler = setInterval(scheduleBeat, 25);
+        });
+        return;
+      }
       nextNoteTime = audioCtx.currentTime;
       currentBeat = 0;
       if (musicScheduler) clearInterval(musicScheduler);
@@ -2117,6 +2525,7 @@
         currentSkin = skin.id;
         myColor = getSnakeColor();
         saveSkins();
+        if (ws) ws.send(JSON.stringify({ type: 'color', color: myColor }));
         renderShop();
         return;
       }
@@ -2131,6 +2540,7 @@
       currentSkin = skin.id;
       myColor = getSnakeColor();
       saveSkins();
+      if (ws) ws.send(JSON.stringify({ type: 'color', color: myColor }));
       renderShop();
     }
 
@@ -2172,7 +2582,11 @@
     function skipRevive() {
       document.getElementById('reviveDialog').classList.remove('show');
       soloReviveAvailable = false;
-      endSoloGame();
+      soloReviveUsed = true;
+      _origEndSoloGame('collision');
+      if (!scoreMultiplierUsed && soloScore > 0) {
+        document.getElementById('resultRewards').style.display = 'flex';
+      }
     }
 
     // ===== PRE-GAME BUFF =====
@@ -2216,15 +2630,15 @@
 
     // ===== OVERRIDE GAME FLOW FOR ADS =====
 
-    // Override endSoloGame to show revive dialog first
+    // Override endSoloGame to show revive dialog first (only on collision death)
     const _origEndSoloGame = endSoloGame;
-    endSoloGame = function() {
+    endSoloGame = function(reason) {
       if (soloReviveAvailable) return; // dialog already showing
-      if (!soloReviveUsed && isSoloMode && soloScore > 0) {
+      if (reason === 'collision' && !soloReviveUsed && isSoloMode && soloScore > 0) {
         showReviveDialog();
         return;
       }
-      _origEndSoloGame();
+      _origEndSoloGame(reason);
       // Show score multiplier option on result
       if (!scoreMultiplierUsed && soloScore > 0) {
         document.getElementById('resultRewards').style.display = 'flex';
@@ -2237,6 +2651,7 @@
       soloReviveUsed = false;
       soloReviveAvailable = false;
       scoreMultiplierUsed = false;
+      const savedBuff = soloPreBuff;
       soloPreBuff = null;
       // Reset buff button UI
       const btns = document.querySelectorAll('#soloScreen .reward-row .reward-option');
@@ -2246,6 +2661,8 @@
         btns[0].style.color = '';
       }
       _origLaunchSolo();
+      // Restore buff after initSoloGame clears it
+      soloPreBuff = savedBuff;
     };
 
     // Override initSoloGame to apply pre-buff and use skin color
