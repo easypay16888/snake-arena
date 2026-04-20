@@ -259,9 +259,10 @@ function moveSnake(p) {
     }
   }
 
-  // Self-collision: skip tail if no food at head (tail will move away)
+  // Self-collision: for bots, skip tail if no food (tail moves away)
+  // For humans, check full body (original behavior)
   const willEat = foods.some(f => f.x === head.x && f.y === head.y);
-  const checkBody = willEat ? p.snake : p.snake.slice(0, -1);
+  const checkBody = (p.isBot && !willEat) ? p.snake.slice(0, -1) : p.snake;
   if (checkBody.some(s => s.x === head.x && s.y === head.y)) {
     if (p.buffs.invincible > 0) return;
     p.alive = false;
@@ -386,8 +387,11 @@ function tick() {
     if (!tickAccumulators[p.id]) tickAccumulators[p.id] = 0;
     tickAccumulators[p.id] += mult;
     let moved = false;
-    while (tickAccumulators[p.id] >= 1 && p.alive) {
+    let movesThisTick = 0;
+    const MAX_MOVES_PER_TICK = 2;
+    while (tickAccumulators[p.id] >= 1 && p.alive && movesThisTick < MAX_MOVES_PER_TICK) {
       tickAccumulators[p.id] -= 1;
+      movesThisTick++;
       moveSnake(p);
       moved = true;
       if (p.isBot && p.alive) {

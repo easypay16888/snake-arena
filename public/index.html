@@ -1836,8 +1836,11 @@
       let mult = getSoloTickMultiplier(soloBuffs, soloSnake.length);
       soloTickAccum += mult;
       let moved = false;
-      while (soloTickAccum >= 1 && soloAlive) {
+      let movesThisTick = 0;
+      const MAX_MOVES_PER_TICK = 2;
+      while (soloTickAccum >= 1 && soloAlive && movesThisTick < MAX_MOVES_PER_TICK) {
         soloTickAccum -= 1;
+        movesThisTick++;
         soloDir = { ...soloNextDir };
         const head = { x: soloSnake[0].x + soloDir.x, y: soloSnake[0].y + soloDir.y };
 
@@ -1847,9 +1850,8 @@
           else { soloAlive = false; playDeathSFX(); endSoloGame('collision'); return; }
         }
 
-        const soloWillEat = soloFoods.some(f => f.x === head.x && f.y === head.y);
-        const soloCheckBody = soloWillEat ? soloSnake : soloSnake.slice(0, -1);
-        if (soloCheckBody.some(s => s.x === head.x && s.y === head.y)) {
+        // Self-collision: check full body (including tail) for player
+        if (soloSnake.some(s => s.x === head.x && s.y === head.y)) {
           if (soloBuffs.invincible > 0) { soloTickAccum = 0; break; }
           soloAlive = false; playDeathSFX(); endSoloGame('collision'); return;
         }
