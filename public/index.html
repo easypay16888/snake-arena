@@ -439,6 +439,13 @@
         <option value="3">3</option>
       </select>
     </div>
+    <div class="mode-toggle">
+      <span class="label">🎮 移动模式</span>
+      <select id="soloMoveMode" onchange="soloMoveModeChange()">
+        <option value="grid">经典网格</option>
+        <option value="free">自由移动</option>
+      </select>
+    </div>
     <div style="margin-top:1rem;">
       <button class="btn" onclick="launchSolo()">开始游戏</button>
       <button class="btn danger" style="margin-left:0.5rem;" onclick="showScreen('connectScreen')">返回</button>
@@ -1004,7 +1011,7 @@
           if (me.buffs[k] > 0) {
             const cfg = PU_CONFIG[k];
             if (cfg) {
-              const secs = Math.ceil(me.buffs[k] / 10);
+              const secs = soloMoveMode === 'free' ? Math.ceil(me.buffs[k]) : Math.ceil(me.buffs[k] / 10);
               bhtml += `<span class="buff-tag" style="background:${cfg.tagBg};border:1px solid ${cfg.tagBorder};color:${cfg.tagColor};">${cfg.icon} ${cfg.label} ${secs}s</span>`;
             }
           }
@@ -1014,9 +1021,10 @@
         buffBar.innerHTML = '';
       }
 
-      document.getElementById('controlsHint').textContent = gameWrapMode
+      const modeHint = soloMoveMode === 'free' ? '触控/鼠标跟随 | +10分' : (gameWrapMode
         ? '方向键/WASD | +10分 | 穿墙 | 蛇越长越快' + (gameImmortalMode && !isSoloMode ? ' | 永生模式' : '') + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛') + (soloBots.length > 0 ? ' | 🤖×' + soloBots.length : '')
-        : '方向键/WASD | +10分 | 撞墙即死 | 蛇越长越快' + (gameImmortalMode && !isSoloMode ? ' | 永生模式' : '') + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛') + (soloBots.length > 0 ? ' | 🤖×' + soloBots.length : '');
+        : '方向键/WASD | +10分 | 撞墙即死 | 蛇越长越快' + (gameImmortalMode && !isSoloMode ? ' | 永生模式' : '') + (isSoloMode && soloMaxTime === 0 ? '' : ' | 计时赛') + (soloBots.length > 0 ? ' | 🤖×' + soloBots.length : ''));
+      document.getElementById('controlsHint').textContent = modeHint;
     }
 
     // --- Particles ---
@@ -1047,6 +1055,17 @@
     // --- Game rendering ---
     function drawGame() {
       frameCount++;
+      if (soloMoveMode === 'free' && isSoloMode && fmStarted && fmAlive) {
+        // Free move mode renders itself in fmFrame while alive
+        requestAnimationFrame(drawGame);
+        return;
+      }
+      // When free move game ended, render free move frame for death screen backdrop
+      if (soloMoveMode === 'free' && isSoloMode && fmStarted && !fmAlive) {
+        drawFreeMoveGame();
+        requestAnimationFrame(drawGame);
+        return;
+      }
       ctx.fillStyle = 'rgba(5,5,16,0.95)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1398,6 +1417,13 @@
       // 输入框聚焦时不拦截方向键
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      // Free move mode keyboard input
+      if (soloMoveMode === 'free' && isSoloMode && fmAlive) {
+        fmKeyDown(e);
+        return;
+      }
+
       let dx = 0, dy = 0;
       switch(e.key) {
         case 'ArrowUp': case 'w': case 'W': dy = -1; break;
@@ -1424,12 +1450,14 @@
 
     let touchStartX = 0, touchStartY = 0;
     canvas.addEventListener('touchstart', (e) => {
+      if (soloMoveMode === 'free' && isSoloMode) { fmTouchStart(e); return; }
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
       e.preventDefault();
     }, { passive: false });
 
     canvas.addEventListener('touchend', (e) => {
+      if (soloMoveMode === 'free' && isSoloMode) { fmTouchEnd(e); return; }
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = e.changedTouches[0].clientY - touchStartY;
       let dirDx = 0, dirDy = 0;
@@ -1447,6 +1475,13 @@
       }
       e.preventDefault();
     }, { passive: false });
+
+    // Free movement touch/mouse listeners
+    canvas.addEventListener('touchmove', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmTouchMove(e); } }, { passive: false });
+    canvas.addEventListener('mousedown', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseDown(e); } });
+    canvas.addEventListener('mousemove', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseMove(e); } });
+    canvas.addEventListener('mouseup', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseUp(e); } });
+    document.addEventListener('keyup', (e) => { fmKeysDown.delete(e.key); });
 
     // --- Result ---
     let rematchRequested = false;
@@ -1484,7 +1519,11 @@
     }
 
     function backToLobby() {
-      if (isSoloMode) { stopSoloLoop(); setMusicState('lobby'); showScreen('soloScreen'); return; }
+      if (isSoloMode) {
+        if (soloMoveMode === 'free') { stopFreeMoveLoop(); }
+        else { stopSoloLoop(); }
+        setMusicState('lobby'); showScreen('soloScreen'); return;
+      }
       if (ws) ws.send(JSON.stringify({ type: 'backToLobby' }));
       showScreen('lobbyScreen');
     }
@@ -1700,6 +1739,20 @@
     }
 
     let soloBotEnabled = false;
+    let soloMoveMode = 'grid'; // 'grid' or 'free'
+
+    function soloMoveModeChange() {
+      soloMoveMode = document.getElementById('soloMoveMode').value;
+      const botToggle = document.getElementById('soloBotToggle');
+      const botCountToggle = document.getElementById('soloBotCountToggle');
+      if (soloMoveMode === 'free') {
+        botToggle.style.display = 'none';
+        botCountToggle.style.display = 'none';
+      } else {
+        botToggle.style.display = 'flex';
+        if (soloBotEnabled) botCountToggle.style.display = 'flex';
+      }
+    }
 
     function updateSoloSetup() {
       const sw = document.getElementById('soloWrapSwitch');
@@ -1728,14 +1781,23 @@
       localStorage.setItem('snakeArenaProfile', JSON.stringify({ name: myName, host: document.getElementById('hostInput').value.trim() }));
       soloMaxTime = parseInt(document.getElementById('soloTimerSelect').value);
       gameWrapMode = soloWrapMode;
-      initSoloGame();
+      if (soloMoveMode === 'free') {
+        initFreeMoveGame();
+      } else {
+        initSoloGame();
+      }
       showCountdown(3);
       setMusicState('countdown');
       playCountdownBeep(false);
       let cd = 2;
       const cdInt = setInterval(() => {
         if (cd > 0) { showCountdown(cd); playCountdownBeep(cd === 1); cd--; }
-        else { clearInterval(cdInt); document.getElementById('countdownOverlay').classList.remove('show'); startSoloGame(); }
+        else {
+          clearInterval(cdInt);
+          document.getElementById('countdownOverlay').classList.remove('show');
+          if (soloMoveMode === 'free') { startFreeMoveGame(); }
+          else { startSoloGame(); }
+        }
       }, 1000);
     }
 
@@ -1983,15 +2045,20 @@
     }
 
     function endSoloGame(reason) {
-      stopSoloLoop();
+      if (soloMoveMode === 'free') { stopFreeMoveLoop(); }
+      else { stopSoloLoop(); }
       setMusicState('result');
       if (audioCtx) playFanfare(audioCtx.currentTime);
       showScreen('resultScreen');
       const heading = document.querySelector('#resultScreen h1');
       if (heading) heading.textContent = reason === 'timeout' ? '时间到' : '比赛结束';
-      const rankings = [{ name: myName, color: getSnakeColor(), score: soloScore, alive: soloAlive }];
-      for (const bot of soloBots) {
-        rankings.push({ name: bot.name, color: bot.color, score: bot.score, alive: bot.alive });
+      const score = soloMoveMode === 'free' ? fmScore : soloScore;
+      const alive = soloMoveMode === 'free' ? fmAlive : soloAlive;
+      const rankings = [{ name: myName, color: getSnakeColor(), score, alive }];
+      if (soloMoveMode !== 'free') {
+        for (const bot of soloBots) {
+          rankings.push({ name: bot.name, color: bot.color, score: bot.score, alive: bot.alive });
+        }
       }
       rankings.sort((a, b) => b.score - a.score);
       renderResult(rankings);
@@ -1999,7 +2066,8 @@
 
     function requestRematch() {
       if (isSoloMode) {
-        initSoloGame();
+        if (soloMoveMode === 'free') { initFreeMoveGame(); }
+        else { initSoloGame(); }
         launchSolo();
         return;
       }
@@ -2009,6 +2077,589 @@
       document.getElementById('rematchBtn').textContent = '等待其他玩家...';
       document.getElementById('rematchBtn').disabled = true;
       ws.send(JSON.stringify({ type: 'rematch' }));
+    }
+
+    // ===== FREE MOVEMENT MODE ENGINE =====
+    let fmHeadX, fmHeadY;
+    let fmAngle, fmTargetAngle;
+    let fmSpeed;
+    let fmTrail = [];
+    let fmLength;
+    let fmAlive = false;
+    let fmScore = 0;
+    let fmBuffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
+    let fmFoods = [];
+    let fmPowerups = [];
+    let fmTimerVal = 120;
+    let fmMaxTime = 120;
+    let fmAnimId = null;
+    let fmLastTime = 0;
+    let fmPowerupTimer = 0;
+    let fmStarted = false;
+    let fmWrapMode = false;
+
+    const FM_SPEED = 150;        // base speed pixels/sec
+    const FM_TURN_RATE = 4.5;    // radians/sec
+    const FM_HEAD_RADIUS = 10;
+    const FM_FOOD_RADIUS = 8;
+    const FM_POWERUP_RADIUS = 10;
+    const FM_SEGMENT_GAP = 12;
+    const FM_INITIAL_LENGTH = 10;
+    const FM_SELF_SKIP = 10;     // segments to skip for self-collision
+    const FM_LENGTH_SPEED_FACTOR = 0.03;
+    const FM_MAX_LENGTH_SPEED = 2.2;
+    const FM_FOOD_COUNT = 5;
+    const FM_POWERUP_MAX = 3;
+    const FM_POWERUP_SPAWN_SEC = 8;
+    const FM_POWERUP_TTL = 15;
+    const FM_MAGNET_RANGE = 80;
+    const FM_BOUNDARY_MARGIN = 15;
+
+    let fmTouchActive = false;
+    let fmTouchX = 0, fmTouchY = 0;
+    let fmKeysDown = new Set();
+
+    function angleLerp(current, target, t) {
+      let diff = target - current;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      return current + diff * t;
+    }
+
+    function fmDist(x1, y1, x2, y2) {
+      return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+    }
+
+    function fmCanvasPos(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left) * (canvas.width / rect.width),
+        y: (clientY - rect.top) * (canvas.height / rect.height)
+      };
+    }
+
+    function fmTouchStart(e) {
+      if (!fmAlive || soloMoveMode !== 'free') return;
+      e.preventDefault();
+      fmTouchActive = true;
+      const pos = fmCanvasPos(e.touches[0].clientX, e.touches[0].clientY);
+      fmTouchX = pos.x; fmTouchY = pos.y;
+    }
+    function fmTouchMove(e) {
+      if (!fmTouchActive || !fmAlive || soloMoveMode !== 'free') return;
+      e.preventDefault();
+      const pos = fmCanvasPos(e.touches[0].clientX, e.touches[0].clientY);
+      fmTouchX = pos.x; fmTouchY = pos.y;
+    }
+    function fmTouchEnd(e) {
+      fmTouchActive = false;
+    }
+    function fmMouseDown(e) {
+      if (!fmAlive || soloMoveMode !== 'free') return;
+      fmTouchActive = true;
+      const pos = fmCanvasPos(e.clientX, e.clientY);
+      fmTouchX = pos.x; fmTouchY = pos.y;
+    }
+    function fmMouseMove(e) {
+      if (!fmTouchActive || !fmAlive || soloMoveMode !== 'free') return;
+      const pos = fmCanvasPos(e.clientX, e.clientY);
+      fmTouchX = pos.x; fmTouchY = pos.y;
+    }
+    function fmMouseUp(e) { fmTouchActive = false; }
+
+    function fmKeyDown(e) {
+      if (!fmAlive || soloMoveMode !== 'free') return;
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const key = e.key;
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','a','A','s','S','d','D'].includes(key)) {
+        e.preventDefault();
+        fmKeysDown.add(key);
+      }
+    }
+    function fmKeyUp(e) { fmKeysDown.delete(e.key); }
+
+    function fmGetTargetAngle() {
+      // Touch/mouse takes priority
+      if (fmTouchActive) {
+        let angle = Math.atan2(fmTouchY - fmHeadY, fmTouchX - fmHeadX);
+        if (fmBuffs.reverse > 0) angle += Math.PI;
+        return angle;
+      }
+      // Keyboard 8-direction
+      let dx = 0, dy = 0;
+      if (fmKeysDown.has('ArrowRight') || fmKeysDown.has('d') || fmKeysDown.has('D')) dx += 1;
+      if (fmKeysDown.has('ArrowLeft') || fmKeysDown.has('a') || fmKeysDown.has('A')) dx -= 1;
+      if (fmKeysDown.has('ArrowDown') || fmKeysDown.has('s') || fmKeysDown.has('S')) dy += 1;
+      if (fmKeysDown.has('ArrowUp') || fmKeysDown.has('w') || fmKeysDown.has('W')) dy -= 1;
+      if (dx === 0 && dy === 0) return fmAngle; // maintain current angle
+      let angle = Math.atan2(dy, dx);
+      if (fmBuffs.reverse > 0) angle += Math.PI;
+      return angle;
+    }
+
+    function fmGetSpeed() {
+      let speed = FM_SPEED;
+      if (fmBuffs.speedUp > 0) speed *= 1.8;
+      if (fmBuffs.speedDown > 0) speed *= 0.5;
+      const segCount = Math.floor(fmTrail.length / FM_SEGMENT_GAP);
+      const lengthBonus = 1 + Math.max(0, segCount - FM_INITIAL_LENGTH) * FM_LENGTH_SPEED_FACTOR;
+      speed *= Math.min(lengthBonus, FM_MAX_LENGTH_SPEED);
+      return speed;
+    }
+
+    function initFreeMoveGame() {
+      fmHeadX = canvas.width / 2;
+      fmHeadY = canvas.height / 2;
+      fmAngle = 0;
+      fmTargetAngle = 0;
+      fmSpeed = FM_SPEED;
+      fmTrail = [];
+      fmLength = FM_INITIAL_LENGTH;
+      for (let i = 0; i < fmLength * FM_SEGMENT_GAP; i++) {
+        fmTrail.push({ x: fmHeadX - i * 0.5, y: fmHeadY });
+      }
+      fmAlive = true;
+      fmScore = 0;
+      fmBuffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
+      fmFoods = [];
+      fmPowerups = [];
+      fmMaxTime = parseInt(document.getElementById('soloTimerSelect').value);
+      fmTimerVal = fmMaxTime;
+      fmPowerupTimer = 0;
+      fmWrapMode = soloWrapMode;
+      for (let i = 0; i < FM_FOOD_COUNT; i++) fmSpawnFood();
+      gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake: fmTrailToSnake(), direction: { x: 1, y: 0 }, score: 0, alive: true, buffs: { ...fmBuffs } }];
+      gameFoods = fmFoods;
+      gamePowerups = fmPowerups;
+      gameTimer = fmMaxTime;
+    }
+
+    function fmTrailToSnake() {
+      const segs = [];
+      for (let i = 0; i < fmTrail.length; i += FM_SEGMENT_GAP) {
+        segs.push({ x: Math.floor(fmTrail[i].x / CELL), y: Math.floor(fmTrail[i].y / CELL) });
+      }
+      return segs;
+    }
+
+    function fmSpawnFood() {
+      const margin = 30;
+      let attempts = 0;
+      while (attempts < 50) {
+        const x = margin + Math.random() * (canvas.width - margin * 2);
+        const y = margin + Math.random() * (canvas.height - margin * 2);
+        const tooClose = fmFoods.some(f => fmDist(x, y, f.x, f.y) < 30);
+        const onSnake = fmTrail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + FM_FOOD_RADIUS);
+        if (!tooClose && !onSnake) {
+          fmFoods.push({ x, y, id: Math.random().toString(36).slice(2, 6) });
+          return;
+        }
+        attempts++;
+      }
+      fmFoods.push({ x: margin + Math.random() * (canvas.width - margin * 2), y: margin + Math.random() * (canvas.height - margin * 2), id: Math.random().toString(36).slice(2, 6) });
+    }
+
+    function fmSpawnPowerup() {
+      if (fmPowerups.length >= FM_POWERUP_MAX) return;
+      const margin = 40;
+      const x = margin + Math.random() * (canvas.width - margin * 2);
+      const y = margin + Math.random() * (canvas.height - margin * 2);
+      const types = ['double', 'speedUp', 'speedDown', 'magnet', 'reverse', 'invincible'];
+      const weights = [25, 15, 15, 15, 15, 15];
+      const total = weights.reduce((s, w) => s + w, 0);
+      let r = Math.random() * total;
+      let type = types[0];
+      for (let i = 0; i < types.length; i++) { r -= weights[i]; if (r <= 0) { type = types[i]; break; } }
+      fmPowerups.push({ x, y, type, id: Math.random().toString(36).slice(2, 6), ttl: FM_POWERUP_TTL });
+    }
+
+    function fmMagnetPull() {
+      if (fmBuffs.magnet <= 0) return;
+      for (const f of fmFoods) {
+        const d = fmDist(fmHeadX, fmHeadY, f.x, f.y);
+        if (d <= FM_MAGNET_RANGE && d > 0) {
+          const pull = 2;
+          const dx = fmHeadX - f.x;
+          const dy = fmHeadY - f.y;
+          f.x += (dx / d) * pull;
+          f.y += (dy / d) * pull;
+        }
+      }
+    }
+
+    function fmApplyBuff(type) {
+      switch (type) {
+        case 'double': fmBuffs.double = 15; break;
+        case 'speedUp': fmBuffs.speedUp = 15; break;
+        case 'speedDown': fmBuffs.speedDown = 15; break;
+        case 'magnet': fmBuffs.magnet = 15; break;
+        case 'reverse': fmBuffs.reverse = 15; break;
+        case 'invincible': fmBuffs.invincible = 15; break;
+      }
+    }
+
+    function fmFrame(timestamp) {
+      if (!fmAlive) {
+        fmAnimId = null;
+        return;
+      }
+      if (!fmLastTime) fmLastTime = timestamp;
+      const dt = Math.min((timestamp - fmLastTime) / 1000, 0.05); // cap at 50ms
+      fmLastTime = timestamp;
+
+      // Input
+      fmTargetAngle = fmGetTargetAngle();
+      const turnAmount = FM_TURN_RATE * dt;
+      fmAngle = angleLerp(fmAngle, fmTargetAngle, Math.min(turnAmount, 1));
+
+      // Movement
+      const speed = fmGetSpeed();
+      fmHeadX += Math.cos(fmAngle) * speed * dt;
+      fmHeadY += Math.sin(fmAngle) * speed * dt;
+
+      // Boundary
+      const m = FM_BOUNDARY_MARGIN;
+      if (fmWrapMode) {
+        if (fmHeadX < 0) fmHeadX += canvas.width;
+        if (fmHeadX >= canvas.width) fmHeadX -= canvas.width;
+        if (fmHeadY < 0) fmHeadY += canvas.height;
+        if (fmHeadY >= canvas.height) fmHeadY -= canvas.height;
+      } else {
+        if (fmHeadX < m || fmHeadX > canvas.width - m || fmHeadY < m || fmHeadY > canvas.height - m) {
+          if (fmBuffs.invincible > 0) {
+            fmHeadX = Math.max(m, Math.min(canvas.width - m, fmHeadX));
+            fmHeadY = Math.max(m, Math.min(canvas.height - m, fmHeadY));
+            fmAngle += Math.PI; // bounce
+          } else {
+            fmAlive = false;
+            playDeathSFX();
+            endSoloGame('collision');
+            fmAnimId = null;
+            return;
+          }
+        }
+      }
+
+      // Trail
+      fmTrail.unshift({ x: fmHeadX, y: fmHeadY });
+      const maxTrailLen = fmLength * FM_SEGMENT_GAP;
+      while (fmTrail.length > maxTrailLen) fmTrail.pop();
+
+      // Buff timers
+      for (const k in fmBuffs) { if (fmBuffs[k] > 0) fmBuffs[k] -= dt; }
+
+      // Magnet
+      fmMagnetPull();
+
+      // Food collision
+      for (let i = fmFoods.length - 1; i >= 0; i--) {
+        if (fmDist(fmHeadX, fmHeadY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + FM_FOOD_RADIUS) {
+          const gain = fmBuffs.double > 0 ? 20 : 10;
+          fmScore += gain;
+          fmFoods.splice(i, 1);
+          fmLength += 2;
+          fmSpawnFood();
+          playEatSFX();
+        }
+      }
+
+      // Powerup collision
+      for (let i = fmPowerups.length - 1; i >= 0; i--) {
+        if (fmDist(fmHeadX, fmHeadY, fmPowerups[i].x, fmPowerups[i].y) < FM_HEAD_RADIUS + FM_POWERUP_RADIUS) {
+          fmApplyBuff(fmPowerups[i].type);
+          fmPowerups.splice(i, 1);
+        }
+      }
+
+      // Powerup TTL and spawn
+      for (let i = fmPowerups.length - 1; i >= 0; i--) {
+        fmPowerups[i].ttl -= dt;
+        if (fmPowerups[i].ttl <= 0) fmPowerups.splice(i, 1);
+      }
+      fmPowerupTimer += dt;
+      if (fmPowerupTimer >= FM_POWERUP_SPAWN_SEC) {
+        fmPowerupTimer = 0;
+        fmSpawnPowerup();
+      }
+
+      // Self-collision (skip first FM_SELF_SKIP segments)
+      if (fmBuffs.invincible <= 0 && fmTrail.length > FM_SELF_SKIP * FM_SEGMENT_GAP) {
+        for (let i = FM_SELF_SKIP * FM_SEGMENT_GAP; i < fmTrail.length; i += Math.max(1, FM_SEGMENT_GAP / 2)) {
+          if (fmDist(fmHeadX, fmHeadY, fmTrail[i].x, fmTrail[i].y) < FM_HEAD_RADIUS * 1.5) {
+            fmAlive = false;
+            playDeathSFX();
+            endSoloGame('collision');
+            fmAnimId = null;
+            return;
+          }
+        }
+      }
+
+      // Sync state for HUD
+      const snake = fmTrailToSnake();
+      gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake, direction: { x: Math.cos(fmAngle) > 0 ? 1 : -1, y: Math.sin(fmAngle) > 0 ? 1 : -1 }, score: fmScore, alive: fmAlive, buffs: { ...fmBuffs } }];
+      gameFoods = fmFoods;
+      gamePowerups = fmPowerups;
+      gameTimer = fmTimerVal;
+      updateHud();
+
+      // Draw
+      drawFreeMoveGame();
+
+      fmAnimId = requestAnimationFrame(fmFrame);
+    }
+
+    let fmTimerInterval = null;
+    function fmTimerTick() {
+      if (!fmAlive || fmMaxTime === 0) return;
+      fmTimerVal--;
+      gameTimer = fmTimerVal;
+      if (fmTimerVal <= 0) { fmTimerVal = 0; endSoloGame('timeout'); }
+      if (fmTimerVal <= 10) setMusicState('urgent');
+    }
+
+    function startFreeMoveGame() {
+      showScreen('gameScreen');
+      setMusicState('playing');
+      fmStarted = true;
+      fmLastTime = 0;
+      fmAnimId = requestAnimationFrame(fmFrame);
+      if (fmMaxTime > 0) fmTimerInterval = setInterval(fmTimerTick, 1000);
+    }
+
+    function stopFreeMoveLoop() {
+      if (fmAnimId) { cancelAnimationFrame(fmAnimId); fmAnimId = null; }
+      if (fmTimerInterval) { clearInterval(fmTimerInterval); fmTimerInterval = null; }
+      fmStarted = false;
+      fmTouchActive = false;
+      fmKeysDown.clear();
+    }
+
+    // --- Free Move Rendering ---
+    function drawFreeMoveGame() {
+      // frameCount is incremented by drawGame's loop
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Subtle grid
+      ctx.strokeStyle = 'rgba(123,104,238,0.06)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= canvas.width; x += CELL) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y <= canvas.height; y += CELL) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // Boundary line
+      if (!fmWrapMode) {
+        ctx.strokeStyle = 'rgba(255,68,68,0.3)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(FM_BOUNDARY_MARGIN, FM_BOUNDARY_MARGIN, canvas.width - FM_BOUNDARY_MARGIN * 2, canvas.height - FM_BOUNDARY_MARGIN * 2);
+      }
+
+      // Foods
+      for (const f of fmFoods) drawFmFood(f);
+
+      // Powerups
+      for (const pu of fmPowerups) drawFmPowerup(pu);
+
+      // Snake
+      drawFreeMoveSnake();
+
+      // Particles
+      updateAndDrawParticles();
+    }
+
+    function drawFmFood(food) {
+      const pulse = Math.sin(frameCount * 0.2) * 0.2 + 0.85;
+      const r = FM_FOOD_RADIUS * pulse;
+
+      ctx.save();
+      ctx.shadowBlur = 20; ctx.shadowColor = '#ff4444';
+      const grad = ctx.createRadialGradient(food.x - r * 0.2, food.y - r * 0.2, 0, food.x, food.y, r);
+      grad.addColorStop(0, '#ffcc66');
+      grad.addColorStop(0.5, '#ff6666');
+      grad.addColorStop(1, '#cc0033');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(food.x, food.y, r, 0, Math.PI * 2); ctx.fill();
+
+      const sparkle = Math.sin(frameCount * 0.3) * 0.4 + 0.5;
+      ctx.fillStyle = `rgba(255,255,255,${sparkle})`;
+      ctx.beginPath(); ctx.arc(food.x - r * 0.3, food.y - r * 0.3, r * 0.25, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawFmPowerup(pu) {
+      const cfg = PU_CONFIG[pu.type];
+      if (!cfg) return;
+      const pulse = Math.sin(frameCount * 0.3) * 0.2 + 0.8;
+      const r = FM_POWERUP_RADIUS * pulse * 0.85;
+      const rotate = frameCount * 0.05;
+      const ttlRatio = (pu.ttl || FM_POWERUP_TTL) / FM_POWERUP_TTL;
+
+      ctx.save();
+      ctx.translate(pu.x, pu.y);
+
+      // TTL ring
+      ctx.save();
+      ctx.rotate(-Math.PI / 2);
+      ctx.strokeStyle = `rgba(255,255,255,${0.2 + ttlRatio * 0.3})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.55, 0, Math.PI * 2 * ttlRatio);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.shadowBlur = 20; ctx.shadowColor = cfg.color;
+      ctx.strokeStyle = cfg.color; ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.5 + Math.sin(frameCount * 0.2) * 0.3;
+      ctx.beginPath();
+      const sides = 6;
+      for (let i = 0; i <= sides; i++) {
+        const a = (i / sides) * Math.PI * 2 - Math.PI / 2 + rotate;
+        const px = Math.cos(a) * r * 1.3, py = Math.sin(a) * r * 1.3;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.stroke();
+
+      ctx.globalAlpha = 0.7; ctx.fillStyle = cfg.color;
+      ctx.beginPath();
+      for (let i = 0; i <= sides; i++) {
+        const a = (i / sides) * Math.PI * 2 - Math.PI / 2 + rotate;
+        const px = Math.cos(a) * r * 0.7, py = Math.sin(a) * r * 0.7;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.fill();
+
+      ctx.globalAlpha = 1; ctx.rotate(-rotate);
+      ctx.fillStyle = '#0a0a1a'; ctx.font = `bold ${FM_POWERUP_RADIUS * 0.7}px Segoe UI, monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowBlur = 0;
+      ctx.fillText(cfg.icon, 0, 0);
+      ctx.restore();
+    }
+
+    function drawFreeMoveSnake() {
+      const skin = SKINS.find(s => s.id === currentSkin) || SKINS[0];
+      const colors = skin.colors;
+      const isMultiColor = colors.length > 2;
+      const color = isMultiColor ? colors[0] : colors[0];
+
+      // Body glow line
+      if (fmTrail.length > 1) {
+        ctx.save();
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = FM_HEAD_RADIUS * 1.2;
+        ctx.shadowBlur = 15; ctx.shadowColor = color;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        ctx.moveTo(fmTrail[0].x, fmTrail[0].y);
+        for (let i = 1; i < fmTrail.length; i++) {
+          // Break line if wrap jump
+          if (fmWrapMode && fmDist(fmTrail[i].x, fmTrail[i].y, fmTrail[i-1].x, fmTrail[i-1].y) > 50) {
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(fmTrail[i].x, fmTrail[i].y);
+          } else {
+            ctx.lineTo(fmTrail[i].x, fmTrail[i].y);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Body segments
+      for (let i = fmTrail.length - 1; i >= FM_SEGMENT_GAP; i -= FM_SEGMENT_GAP) {
+        const seg = fmTrail[i];
+        const segIdx = Math.floor(i / FM_SEGMENT_GAP);
+        const segColor = isMultiColor ? colors[segIdx % colors.length] : color;
+        const rgb = hexToRgb(segColor);
+        const r = FM_HEAD_RADIUS * 0.85;
+
+        ctx.save();
+        ctx.shadowBlur = 8; ctx.shadowColor = segColor;
+        const grad = ctx.createRadialGradient(seg.x - r * 0.3, seg.y - r * 0.3, r * 0.2, seg.x, seg.y, r);
+        grad.addColorStop(0, `rgba(${rgb},0.95)`);
+        grad.addColorStop(0.5, `rgba(${rgb},0.7)`);
+        grad.addColorStop(1, `rgba(${rgb},0.35)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(seg.x, seg.y, r, 0, Math.PI * 2); ctx.fill();
+
+        ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(seg.x - r * 0.25, seg.y - r * 0.25, r * 0.25, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      // Head
+      const pulse = Math.sin(frameCount * 0.25) * 0.12;
+      const headR = FM_HEAD_RADIUS * (1 + pulse);
+      const rgb = hexToRgb(color);
+      ctx.save();
+      ctx.shadowBlur = 25; ctx.shadowColor = color;
+      const grad = ctx.createRadialGradient(fmHeadX - headR * 0.3, fmHeadY - headR * 0.3, headR * 0.2, fmHeadX, fmHeadY, headR);
+      grad.addColorStop(0, `rgba(${rgb},0.95)`);
+      grad.addColorStop(0.5, `rgba(${rgb},0.7)`);
+      grad.addColorStop(1, `rgba(${rgb},0.35)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, headR, 0, Math.PI * 2); ctx.fill();
+
+      // Eyes
+      const eyeOff = FM_HEAD_RADIUS * 0.4;
+      const eyeSpread = FM_HEAD_RADIUS * 0.4;
+      const fwdX = Math.cos(fmAngle), fwdY = Math.sin(fmAngle);
+      const perpX = -fwdY, perpY = fwdX;
+      const leX = fmHeadX + fwdX * eyeOff + perpX * eyeSpread;
+      const leY = fmHeadY + fwdY * eyeOff + perpY * eyeSpread;
+      const reX = fmHeadX + fwdX * eyeOff - perpX * eyeSpread;
+      const reY = fmHeadY + fwdY * eyeOff - perpY * eyeSpread;
+
+      ctx.globalAlpha = 1; ctx.shadowBlur = 6; ctx.shadowColor = '#ffffff';
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(leX, leY, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(reX, reY, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0a0a1a'; ctx.shadowBlur = 0;
+      const pupilOff = 1.2;
+      ctx.beginPath(); ctx.arc(leX + fwdX * pupilOff, leY + fwdY * pupilOff, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(reX + fwdX * pupilOff, reY + fwdY * pupilOff, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      // Invincible shield
+      if (fmBuffs.invincible > 0) {
+        const shimmer = Math.sin(frameCount * 0.4) * 0.3 + 0.5;
+        ctx.save();
+        ctx.globalAlpha = shimmer;
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+        ctx.shadowBlur = 20; ctx.shadowColor = '#ffffff';
+        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_HEAD_RADIUS * 1.8, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = shimmer * 0.4;
+        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_HEAD_RADIUS * 2.3, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+
+      // Magnet aura
+      if (fmBuffs.magnet > 0) {
+        const magPulse = Math.sin(frameCount * 0.15) * 0.2 + 0.3;
+        ctx.save();
+        ctx.globalAlpha = magPulse;
+        ctx.strokeStyle = '#ff88cc'; ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 6]); ctx.shadowBlur = 10; ctx.shadowColor = '#ff88cc';
+        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_MAGNET_RANGE, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+
+      // Double score indicator
+      if (fmBuffs.double > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.8 + Math.sin(frameCount * 0.3) * 0.2;
+        ctx.font = 'bold 11px Segoe UI'; ctx.fillStyle = '#ffd700';
+        ctx.shadowBlur = 6; ctx.shadowColor = '#ffd700';
+        ctx.textAlign = 'center';
+        ctx.fillText('2x', fmHeadX, fmHeadY - FM_HEAD_RADIUS - 4);
+        ctx.restore();
+      }
     }
 
     // --- Start render loop ---
@@ -2595,7 +3246,8 @@
         return;
       }
       soloReviveAvailable = true;
-      stopSoloLoop();
+      if (soloMoveMode === 'free') { stopFreeMoveLoop(); }
+      else { stopSoloLoop(); }
       document.getElementById('reviveDialog').classList.add('show');
     }
 
@@ -2605,15 +3257,20 @@
       const watched = await AdManager.showRewarded();
       if (!watched) { endSoloGame(); return; }
       // Revive: keep score and length, continue playing
-      soloAlive = true;
       soloReviveUsed = true;
-      // Give brief invincibility
-      soloBuffs.invincible = 30; // 3 seconds
-      syncSoloState();
-      // Resume game
-      if (!soloTickId) {
-        soloTickId = setInterval(soloTick, 100);
-        if (soloMaxTime > 0 && !soloTimerId) soloTimerId = setInterval(soloTimerTick, 1000);
+      if (soloMoveMode === 'free') {
+        fmAlive = true;
+        fmBuffs.invincible = 3;
+        fmAnimId = requestAnimationFrame(fmFrame);
+        if (fmMaxTime > 0) fmTimerInterval = setInterval(fmTimerTick, 1000);
+      } else {
+        soloAlive = true;
+        soloBuffs.invincible = 30;
+        syncSoloState();
+        if (!soloTickId) {
+          soloTickId = setInterval(soloTick, 100);
+          if (soloMaxTime > 0 && !soloTimerId) soloTimerId = setInterval(soloTimerTick, 1000);
+        }
       }
     }
 
@@ -2657,12 +3314,18 @@
       scoreMultiplierUsed = true;
       // Apply 1.5x to displayed score
       if (isSoloMode) {
-        soloScore = Math.floor(soloScore * 1.5);
+        if (soloMoveMode === 'free') {
+          fmScore = Math.floor(fmScore * 1.5);
+        } else {
+          soloScore = Math.floor(soloScore * 1.5);
+        }
       }
       document.getElementById('resultRewards').style.display = 'none';
       // Re-render result
       if (isSoloMode) {
-        renderResult([{ name: myName, color: getSnakeColor(), score: soloScore, alive: soloAlive }]);
+        const score = soloMoveMode === 'free' ? fmScore : soloScore;
+        const alive = soloMoveMode === 'free' ? fmAlive : soloAlive;
+        renderResult([{ name: myName, color: getSnakeColor(), score, alive }]);
       }
     }
 
@@ -2672,13 +3335,14 @@
     const _origEndSoloGame = endSoloGame;
     endSoloGame = function(reason) {
       if (soloReviveAvailable) return; // dialog already showing
-      if (reason === 'collision' && !soloReviveUsed && isSoloMode && soloScore > 0) {
+      const currentScore = soloMoveMode === 'free' ? fmScore : soloScore;
+      if (reason === 'collision' && !soloReviveUsed && isSoloMode && currentScore > 0) {
         showReviveDialog();
         return;
       }
       _origEndSoloGame(reason);
       // Show score multiplier option on result
-      if (!scoreMultiplierUsed && soloScore > 0) {
+      if (!scoreMultiplierUsed && currentScore > 0) {
         document.getElementById('resultRewards').style.display = 'flex';
       }
     };
@@ -2706,6 +3370,18 @@
     // Override initSoloGame to apply pre-buff and use skin color
     const _origInitSoloGame = initSoloGame;
     initSoloGame = function() {
+      if (soloMoveMode === 'free') {
+        initFreeMoveGame();
+        gameSnakes[0].color = getSnakeColor();
+        if (soloPreBuff) {
+          setTimeout(() => {
+            fmApplyBuff(soloPreBuff.type);
+            fmBuffs[soloPreBuff.type] = soloPreBuff.duration;
+            soloPreBuff = null;
+          }, 3500);
+        }
+        return;
+      }
       _origInitSoloGame();
       // Apply skin color
       gameSnakes[0].color = getSnakeColor();
@@ -2723,7 +3399,8 @@
     // Override backToLobby to show interstitial
     const _origBackToLobby = backToLobby;
     backToLobby = async function() {
-      if (isSoloMode && soloScore > 20) {
+      const currentScore = soloMoveMode === 'free' ? fmScore : soloScore;
+      if (isSoloMode && currentScore > 20) {
         await AdManager.showInterstitial();
       }
       _origBackToLobby();
@@ -2739,6 +3416,7 @@
     // Override syncSoloState to use skin color
     const _origSyncSoloState = syncSoloState;
     syncSoloState = function() {
+      if (soloMoveMode === 'free') return; // free move syncs its own state
       _origSyncSoloState();
       if (gameSnakes[0]) gameSnakes[0].color = getSnakeColor();
     };
