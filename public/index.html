@@ -2097,23 +2097,27 @@
     let fmPowerupTimer = 0;
     let fmStarted = false;
     let fmWrapMode = false;
+    let fmCamX = 0, fmCamY = 0;
 
-    const FM_SPEED = 150;        // base speed pixels/sec
+    const FM_SPEED = 180;        // base speed pixels/sec
     const FM_TURN_RATE = 4.5;    // radians/sec
-    const FM_HEAD_RADIUS = 10;
-    const FM_FOOD_RADIUS = 8;
-    const FM_POWERUP_RADIUS = 10;
+    const FM_HEAD_RADIUS = 12;
+    const FM_FOOD_RADIUS_MIN = 5;
+    const FM_FOOD_RADIUS_MAX = 14;
+    const FM_POWERUP_RADIUS = 12;
     const FM_SEGMENT_GAP = 12;
     const FM_INITIAL_LENGTH = 10;
     const FM_SELF_SKIP = 10;     // segments to skip for self-collision
-    const FM_LENGTH_SPEED_FACTOR = 0.03;
-    const FM_MAX_LENGTH_SPEED = 2.2;
-    const FM_FOOD_COUNT = 5;
-    const FM_POWERUP_MAX = 3;
-    const FM_POWERUP_SPAWN_SEC = 8;
+    const FM_LENGTH_SPEED_FACTOR = 0.02;
+    const FM_MAX_LENGTH_SPEED = 2.0;
+    const FM_FOOD_COUNT = 15;
+    const FM_POWERUP_MAX = 4;
+    const FM_POWERUP_SPAWN_SEC = 6;
     const FM_POWERUP_TTL = 15;
-    const FM_MAGNET_RANGE = 80;
-    const FM_BOUNDARY_MARGIN = 15;
+    const FM_MAGNET_RANGE = 120;
+    const FM_BOUNDARY_MARGIN = 20;
+    const FM_WORLD_W = 2000;
+    const FM_WORLD_H = 2000;
 
     let fmTouchActive = false;
     let fmTouchX = 0, fmTouchY = 0;
@@ -2132,10 +2136,10 @@
 
     function fmCanvasPos(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
-      return {
-        x: (clientX - rect.left) * (canvas.width / rect.width),
-        y: (clientY - rect.top) * (canvas.height / rect.height)
-      };
+      const sx = (clientX - rect.left) * (canvas.width / rect.width);
+      const sy = (clientY - rect.top) * (canvas.height / rect.height);
+      // Convert screen position to world position
+      return { x: sx + fmCamX, y: sy + fmCamY };
     }
 
     function fmTouchStart(e) {
@@ -2209,11 +2213,13 @@
     }
 
     function initFreeMoveGame() {
-      fmHeadX = canvas.width / 2;
-      fmHeadY = canvas.height / 2;
+      fmHeadX = FM_WORLD_W / 2;
+      fmHeadY = FM_WORLD_H / 2;
       fmAngle = 0;
       fmTargetAngle = 0;
       fmSpeed = FM_SPEED;
+      fmCamX = fmHeadX - canvas.width / 2;
+      fmCamY = fmHeadY - canvas.height / 2;
       fmTrail = [];
       fmLength = FM_INITIAL_LENGTH;
       for (let i = 0; i < fmLength * FM_SEGMENT_GAP; i++) {
@@ -2244,27 +2250,29 @@
     }
 
     function fmSpawnFood() {
-      const margin = 30;
+      const margin = 40;
       let attempts = 0;
       while (attempts < 50) {
-        const x = margin + Math.random() * (canvas.width - margin * 2);
-        const y = margin + Math.random() * (canvas.height - margin * 2);
-        const tooClose = fmFoods.some(f => fmDist(x, y, f.x, f.y) < 30);
-        const onSnake = fmTrail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + FM_FOOD_RADIUS);
+        const x = margin + Math.random() * (FM_WORLD_W - margin * 2);
+        const y = margin + Math.random() * (FM_WORLD_H - margin * 2);
+        const r = FM_FOOD_RADIUS_MIN + Math.random() * (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN);
+        const tooClose = fmFoods.some(f => fmDist(x, y, f.x, f.y) < 40);
+        const onSnake = fmTrail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + r);
         if (!tooClose && !onSnake) {
-          fmFoods.push({ x, y, id: Math.random().toString(36).slice(2, 6) });
+          fmFoods.push({ x, y, r, id: Math.random().toString(36).slice(2, 6) });
           return;
         }
         attempts++;
       }
-      fmFoods.push({ x: margin + Math.random() * (canvas.width - margin * 2), y: margin + Math.random() * (canvas.height - margin * 2), id: Math.random().toString(36).slice(2, 6) });
+      const r = FM_FOOD_RADIUS_MIN + Math.random() * (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN);
+      fmFoods.push({ x: margin + Math.random() * (FM_WORLD_W - margin * 2), y: margin + Math.random() * (FM_WORLD_H - margin * 2), r, id: Math.random().toString(36).slice(2, 6) });
     }
 
     function fmSpawnPowerup() {
       if (fmPowerups.length >= FM_POWERUP_MAX) return;
-      const margin = 40;
-      const x = margin + Math.random() * (canvas.width - margin * 2);
-      const y = margin + Math.random() * (canvas.height - margin * 2);
+      const margin = 60;
+      const x = margin + Math.random() * (FM_WORLD_W - margin * 2);
+      const y = margin + Math.random() * (FM_WORLD_H - margin * 2);
       const types = ['double', 'speedUp', 'speedDown', 'magnet', 'reverse', 'invincible'];
       const weights = [25, 15, 15, 15, 15, 15];
       const total = weights.reduce((s, w) => s + w, 0);
@@ -2321,15 +2329,15 @@
       // Boundary
       const m = FM_BOUNDARY_MARGIN;
       if (fmWrapMode) {
-        if (fmHeadX < 0) fmHeadX += canvas.width;
-        if (fmHeadX >= canvas.width) fmHeadX -= canvas.width;
-        if (fmHeadY < 0) fmHeadY += canvas.height;
-        if (fmHeadY >= canvas.height) fmHeadY -= canvas.height;
+        if (fmHeadX < 0) fmHeadX += FM_WORLD_W;
+        if (fmHeadX >= FM_WORLD_W) fmHeadX -= FM_WORLD_W;
+        if (fmHeadY < 0) fmHeadY += FM_WORLD_H;
+        if (fmHeadY >= FM_WORLD_H) fmHeadY -= FM_WORLD_H;
       } else {
-        if (fmHeadX < m || fmHeadX > canvas.width - m || fmHeadY < m || fmHeadY > canvas.height - m) {
+        if (fmHeadX < m || fmHeadX > FM_WORLD_W - m || fmHeadY < m || fmHeadY > FM_WORLD_H - m) {
           if (fmBuffs.invincible > 0) {
-            fmHeadX = Math.max(m, Math.min(canvas.width - m, fmHeadX));
-            fmHeadY = Math.max(m, Math.min(canvas.height - m, fmHeadY));
+            fmHeadX = Math.max(m, Math.min(FM_WORLD_W - m, fmHeadX));
+            fmHeadY = Math.max(m, Math.min(FM_WORLD_H - m, fmHeadY));
             fmAngle += Math.PI; // bounce
           } else {
             fmAlive = false;
@@ -2354,11 +2362,13 @@
 
       // Food collision
       for (let i = fmFoods.length - 1; i >= 0; i--) {
-        if (fmDist(fmHeadX, fmHeadY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + FM_FOOD_RADIUS) {
-          const gain = fmBuffs.double > 0 ? 20 : 10;
+        const foodR = fmFoods[i].r || FM_FOOD_RADIUS_MIN;
+        if (fmDist(fmHeadX, fmHeadY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + foodR) {
+          const sizeBonus = Math.round((foodR - FM_FOOD_RADIUS_MIN) / (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN) * 15);
+          const gain = fmBuffs.double > 0 ? (10 + sizeBonus) * 2 : 10 + sizeBonus;
           fmScore += gain;
+          fmLength += Math.round(1 + foodR / FM_FOOD_RADIUS_MIN);
           fmFoods.splice(i, 1);
-          fmLength += 2;
           fmSpawnFood();
           playEatSFX();
         }
@@ -2385,6 +2395,14 @@
 
       // Free move mode: snake can pass through its own body (like Slither.io)
       // Self-collision is disabled — only wall and other snakes cause death
+
+      // Camera: keep head centered
+      fmCamX = fmHeadX - canvas.width / 2;
+      fmCamY = fmHeadY - canvas.height / 2;
+      if (!fmWrapMode) {
+        fmCamX = Math.max(0, Math.min(FM_WORLD_W - canvas.width, fmCamX));
+        fmCamY = Math.max(0, Math.min(FM_WORLD_H - canvas.height, fmCamY));
+      }
 
       // Sync state for HUD
       const snake = fmTrailToSnake();
@@ -2427,26 +2445,34 @@
     }
 
     // --- Free Move Rendering ---
+    function fmWorldToScreen(wx, wy) {
+      return { x: wx - fmCamX, y: wy - fmCamY };
+    }
+
     function drawFreeMoveGame() {
       // frameCount is incremented by drawGame's loop
       ctx.fillStyle = '#0a0a1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Subtle grid
+      // Subtle grid (follows camera)
       ctx.strokeStyle = 'rgba(123,104,238,0.06)';
       ctx.lineWidth = 1;
-      for (let x = 0; x <= canvas.width; x += CELL) {
+      const gridStep = 50;
+      const startX = -(fmCamX % gridStep);
+      const startY = -(fmCamY % gridStep);
+      for (let x = startX; x <= canvas.width; x += gridStep) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
       }
-      for (let y = 0; y <= canvas.height; y += CELL) {
+      for (let y = startY; y <= canvas.height; y += gridStep) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       }
 
-      // Boundary line
+      // Boundary line (world coords)
       if (!fmWrapMode) {
+        const tl = fmWorldToScreen(FM_BOUNDARY_MARGIN, FM_BOUNDARY_MARGIN);
         ctx.strokeStyle = 'rgba(255,68,68,0.3)';
         ctx.lineWidth = 2;
-        ctx.strokeRect(FM_BOUNDARY_MARGIN, FM_BOUNDARY_MARGIN, canvas.width - FM_BOUNDARY_MARGIN * 2, canvas.height - FM_BOUNDARY_MARGIN * 2);
+        ctx.strokeRect(tl.x, tl.y, FM_WORLD_W - FM_BOUNDARY_MARGIN * 2, FM_WORLD_H - FM_BOUNDARY_MARGIN * 2);
       }
 
       // Foods
@@ -2460,37 +2486,102 @@
 
       // Particles
       updateAndDrawParticles();
+
+      // Minimap
+      drawFmMinimap();
+    }
+
+    function drawFmMinimap() {
+      const mw = 120, mh = 120;
+      const mx = canvas.width - mw - 10, my = canvas.height - mh - 10;
+      const scaleX = mw / FM_WORLD_W, scaleY = mh / FM_WORLD_H;
+
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = 'rgba(5,5,16,0.8)';
+      ctx.strokeStyle = 'rgba(123,104,238,0.4)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(mx, my, mw, mh);
+      ctx.strokeRect(mx, my, mw, mh);
+
+      // Viewport rect
+      ctx.strokeStyle = 'rgba(0,255,204,0.5)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        mx + fmCamX * scaleX,
+        my + fmCamY * scaleY,
+        canvas.width * scaleX,
+        canvas.height * scaleY
+      );
+
+      // Foods
+      ctx.fillStyle = '#ff6666';
+      for (const f of fmFoods) {
+        ctx.beginPath();
+        ctx.arc(mx + f.x * scaleX, my + f.y * scaleY, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Snake head
+      if (fmAlive) {
+        ctx.fillStyle = getSnakeColor();
+        ctx.shadowBlur = 4; ctx.shadowColor = getSnakeColor();
+        ctx.beginPath();
+        ctx.arc(mx + fmHeadX * scaleX, my + fmHeadY * scaleY, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
 
     function drawFmFood(food) {
+      const pos = fmWorldToScreen(food.x, food.y);
+      // Skip if off screen
+      if (pos.x < -30 || pos.x > canvas.width + 30 || pos.y < -30 || pos.y > canvas.height + 30) return;
+
       const pulse = Math.sin(frameCount * 0.2) * 0.2 + 0.85;
-      const r = FM_FOOD_RADIUS * pulse;
+      const baseR = food.r || FM_FOOD_RADIUS_MIN;
+      const r = baseR * pulse;
+      // Larger food = warmer color, smaller = cooler
+      const sizeRatio = (baseR - FM_FOOD_RADIUS_MIN) / (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN);
 
       ctx.save();
-      ctx.shadowBlur = 20; ctx.shadowColor = '#ff4444';
-      const grad = ctx.createRadialGradient(food.x - r * 0.2, food.y - r * 0.2, 0, food.x, food.y, r);
-      grad.addColorStop(0, '#ffcc66');
-      grad.addColorStop(0.5, '#ff6666');
-      grad.addColorStop(1, '#cc0033');
+      ctx.shadowBlur = 15 + sizeRatio * 15; ctx.shadowColor = sizeRatio > 0.5 ? '#ff4444' : '#ffaa44';
+      const grad = ctx.createRadialGradient(pos.x - r * 0.2, pos.y - r * 0.2, 0, pos.x, pos.y, r);
+      if (sizeRatio > 0.6) {
+        grad.addColorStop(0, '#ffee44');
+        grad.addColorStop(0.5, '#ff4444');
+        grad.addColorStop(1, '#aa0022');
+      } else if (sizeRatio > 0.3) {
+        grad.addColorStop(0, '#ffcc66');
+        grad.addColorStop(0.5, '#ff6666');
+        grad.addColorStop(1, '#cc0033');
+      } else {
+        grad.addColorStop(0, '#ffffaa');
+        grad.addColorStop(0.5, '#ffaa44');
+        grad.addColorStop(1, '#cc5500');
+      }
       ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(food.x, food.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2); ctx.fill();
 
       const sparkle = Math.sin(frameCount * 0.3) * 0.4 + 0.5;
       ctx.fillStyle = `rgba(255,255,255,${sparkle})`;
-      ctx.beginPath(); ctx.arc(food.x - r * 0.3, food.y - r * 0.3, r * 0.25, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(pos.x - r * 0.3, pos.y - r * 0.3, r * 0.25, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
     function drawFmPowerup(pu) {
       const cfg = PU_CONFIG[pu.type];
       if (!cfg) return;
+      const pos = fmWorldToScreen(pu.x, pu.y);
+      if (pos.x < -30 || pos.x > canvas.width + 30 || pos.y < -30 || pos.y > canvas.height + 30) return;
       const pulse = Math.sin(frameCount * 0.3) * 0.2 + 0.8;
       const r = FM_POWERUP_RADIUS * pulse * 0.85;
       const rotate = frameCount * 0.05;
       const ttlRatio = (pu.ttl || FM_POWERUP_TTL) / FM_POWERUP_TTL;
 
       ctx.save();
-      ctx.translate(pu.x, pu.y);
+      ctx.translate(pos.x, pos.y);
 
       // TTL ring
       ctx.save();
@@ -2536,6 +2627,9 @@
       const isMultiColor = colors.length > 2;
       const color = isMultiColor ? colors[0] : colors[0];
 
+      ctx.save();
+      ctx.translate(-fmCamX, -fmCamY);
+
       // Body glow line
       if (fmTrail.length > 1) {
         ctx.save();
@@ -2547,7 +2641,6 @@
         ctx.beginPath();
         ctx.moveTo(fmTrail[0].x, fmTrail[0].y);
         for (let i = 1; i < fmTrail.length; i++) {
-          // Break line if wrap jump
           if (fmWrapMode && fmDist(fmTrail[i].x, fmTrail[i].y, fmTrail[i-1].x, fmTrail[i-1].y) > 50) {
             ctx.stroke();
             ctx.beginPath();
@@ -2650,6 +2743,8 @@
         ctx.fillText('2x', fmHeadX, fmHeadY - FM_HEAD_RADIUS - 4);
         ctx.restore();
       }
+
+      ctx.restore(); // camera transform
     }
 
     // --- Start render loop ---
