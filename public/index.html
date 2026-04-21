@@ -2098,6 +2098,7 @@
     let fmStarted = false;
     let fmWrapMode = false;
     let fmCamX = 0, fmCamY = 0;
+    let fmBgCanvas = null; // cached background texture
 
     const FM_SPEED = 180;        // base speed pixels/sec
     const FM_TURN_RATE = 4.5;    // radians/sec
@@ -2213,6 +2214,7 @@
     }
 
     function initFreeMoveGame() {
+      fmGenerateBackground();
       fmHeadX = FM_WORLD_W / 2;
       fmHeadY = FM_WORLD_H / 2;
       fmAngle = 0;
@@ -2449,60 +2451,96 @@
       return { x: wx - fmCamX, y: wy - fmCamY };
     }
 
+    function fmGenerateBackground() {
+      fmBgCanvas = document.createElement('canvas');
+      fmBgCanvas.width = FM_WORLD_W;
+      fmBgCanvas.height = FM_WORLD_H;
+      const bg = fmBgCanvas.getContext('2d');
+
+      // Zone colors — 4x4 grid of colored sectors
+      const zoneColors = [
+        ['#0d0d28', '#0a0a22', '#0f0d2d', '#0b0b25'],
+        ['#0a0a22', '#0e0d2a', '#0c0c24', '#0d1028'],
+        ['#0f0d2d', '#0b0c24', '#0a0a22', '#0e0d2a'],
+        ['#0b0b25', '#0d0d28', '#0d1028', '#0a0a22'],
+      ];
+      const zoneW = FM_WORLD_W / 4;
+      const zoneH = FM_WORLD_H / 4;
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 4; col++) {
+          bg.fillStyle = zoneColors[row][col];
+          bg.fillRect(col * zoneW, row * zoneH, zoneW, zoneH);
+        }
+      }
+
+      // Hex grid pattern
+      const hexSize = 30;
+      const hexW = hexSize * 2;
+      const hexH = hexSize * Math.sqrt(3);
+      bg.strokeStyle = 'rgba(80,70,160,0.08)';
+      bg.lineWidth = 0.8;
+      for (let row = -1; row < FM_WORLD_H / hexH + 1; row++) {
+        for (let col = -1; col < FM_WORLD_W / hexW + 1; col++) {
+          const cx = col * hexW * 0.75;
+          const cy = row * hexH + (col % 2 ? hexH / 2 : 0);
+          bg.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const angle = Math.PI / 3 * i - Math.PI / 6;
+            const hx = cx + hexSize * 0.55 * Math.cos(angle);
+            const hy = cy + hexSize * 0.55 * Math.sin(angle);
+            if (i === 0) bg.moveTo(hx, hy);
+            else bg.lineTo(hx, hy);
+          }
+          bg.closePath();
+          bg.stroke();
+        }
+      }
+
+      // Subtle radial glow at center
+      const centerGrad = bg.createRadialGradient(FM_WORLD_W / 2, FM_WORLD_H / 2, 0, FM_WORLD_W / 2, FM_WORLD_H / 2, FM_WORLD_W * 0.4);
+      centerGrad.addColorStop(0, 'rgba(123,104,238,0.04)');
+      centerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      bg.fillStyle = centerGrad;
+      bg.fillRect(0, 0, FM_WORLD_W, FM_WORLD_H);
+
+      // Decorative scattered dots (stars)
+      for (let i = 0; i < 200; i++) {
+        const sx = Math.random() * FM_WORLD_W;
+        const sy = Math.random() * FM_WORLD_H;
+        const sr = Math.random() * 1.5 + 0.3;
+        const sa = Math.random() * 0.15 + 0.05;
+        bg.fillStyle = `rgba(180,170,255,${sa})`;
+        bg.beginPath();
+        bg.arc(sx, sy, sr, 0, Math.PI * 2);
+        bg.fill();
+      }
+
+      // Corner accent dots (larger, colored)
+      const accentColors = ['rgba(123,104,238,0.06)', 'rgba(0,255,204,0.05)', 'rgba(255,110,196,0.04)', 'rgba(255,215,0,0.04)'];
+      for (let i = 0; i < 30; i++) {
+        const ax = Math.random() * FM_WORLD_W;
+        const ay = Math.random() * FM_WORLD_H;
+        const ar = Math.random() * 60 + 30;
+        const ac = accentColors[Math.floor(Math.random() * accentColors.length)];
+        const ag = bg.createRadialGradient(ax, ay, 0, ax, ay, ar);
+        ag.addColorStop(0, ac);
+        ag.addColorStop(1, 'rgba(0,0,0,0)');
+        bg.fillStyle = ag;
+        bg.beginPath();
+        bg.arc(ax, ay, ar, 0, Math.PI * 2);
+        bg.fill();
+      }
+    }
+
     function drawFreeMoveGame() {
       // frameCount is incremented by drawGame's loop
 
-      // Background gradient
-      const bgGrad = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, 0, canvas.width / 2, canvas.height / 2, canvas.width * 0.7);
-      bgGrad.addColorStop(0, '#0d0d2b');
-      bgGrad.addColorStop(0.5, '#0a0a1f');
-      bgGrad.addColorStop(1, '#050510');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Subtle dot grid (follows camera)
-      ctx.fillStyle = 'rgba(123,104,238,0.08)';
-      const dotStep = 50;
-      const dotStartX = -(fmCamX % dotStep);
-      const dotStartY = -(fmCamY % dotStep);
-      for (let x = dotStartX; x <= canvas.width; x += dotStep) {
-        for (let y = dotStartY; y <= canvas.height; y += dotStep) {
-          ctx.beginPath();
-          ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // Crosshair grid lines (subtle, every 200px world)
-      ctx.strokeStyle = 'rgba(123,104,238,0.04)';
-      ctx.lineWidth = 1;
-      const lineStep = 200;
-      const lineStartX = -(fmCamX % lineStep);
-      const lineStartY = -(fmCamY % lineStep);
-      for (let x = lineStartX; x <= canvas.width; x += lineStep) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-      }
-      for (let y = lineStartY; y <= canvas.height; y += lineStep) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-      }
-
-      // Decorative nebula blobs (world-space, subtle)
-      const nebulaPositions = [
-        { x: 300, y: 300, r: 250, color: 'rgba(123,104,238,0.03)' },
-        { x: 1700, y: 500, r: 300, color: 'rgba(0,255,204,0.02)' },
-        { x: 900, y: 1500, r: 280, color: 'rgba(255,110,196,0.02)' },
-        { x: 400, y: 1700, r: 220, color: 'rgba(255,215,0,0.02)' },
-        { x: 1500, y: 1600, r: 260, color: 'rgba(123,104,238,0.03)' },
-      ];
-      for (const n of nebulaPositions) {
-        const ns = fmWorldToScreen(n.x, n.y);
-        if (ns.x > -n.r && ns.x < canvas.width + n.r && ns.y > -n.r && ns.y < canvas.height + n.r) {
-          const g = ctx.createRadialGradient(ns.x, ns.y, 0, ns.x, ns.y, n.r);
-          g.addColorStop(0, n.color);
-          g.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = g;
-          ctx.fillRect(ns.x - n.r, ns.y - n.r, n.r * 2, n.r * 2);
-        }
+      // Draw cached background with camera offset
+      if (fmBgCanvas) {
+        ctx.drawImage(fmBgCanvas, -fmCamX, -fmCamY);
+      } else {
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
       // Boundary glow
@@ -2511,25 +2549,20 @@
         const bw = FM_WORLD_W - FM_BOUNDARY_MARGIN * 2;
         const bh = FM_WORLD_H - FM_BOUNDARY_MARGIN * 2;
         const pulse = Math.sin(frameCount * 0.06) * 0.15 + 0.35;
-        // Outer glow
         ctx.save();
         ctx.strokeStyle = `rgba(255,68,68,${pulse * 0.6})`;
         ctx.lineWidth = 4;
         ctx.shadowBlur = 30; ctx.shadowColor = 'rgba(255,68,68,0.5)';
         ctx.strokeRect(tl.x, tl.y, bw, bh);
-        // Inner line
         ctx.strokeStyle = `rgba(255,68,68,${pulse * 0.3})`;
         ctx.lineWidth = 1;
         ctx.shadowBlur = 0;
         ctx.strokeRect(tl.x + 4, tl.y + 4, bw - 8, bh - 8);
         ctx.restore();
-
         // Corner markers
         const corners = [
-          { x: tl.x, y: tl.y },
-          { x: tl.x + bw, y: tl.y },
-          { x: tl.x, y: tl.y + bh },
-          { x: tl.x + bw, y: tl.y + bh },
+          { x: tl.x, y: tl.y }, { x: tl.x + bw, y: tl.y },
+          { x: tl.x, y: tl.y + bh }, { x: tl.x + bw, y: tl.y + bh },
         ];
         ctx.save();
         ctx.strokeStyle = `rgba(0,255,204,${pulse})`;
@@ -2545,7 +2578,6 @@
         }
         ctx.restore();
       } else {
-        // Wrap mode: subtle border shimmer
         const pulse = Math.sin(frameCount * 0.08) * 0.3 + 0.5;
         const tl = fmWorldToScreen(0, 0);
         ctx.save();
