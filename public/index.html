@@ -2451,28 +2451,109 @@
 
     function drawFreeMoveGame() {
       // frameCount is incremented by drawGame's loop
-      ctx.fillStyle = '#0a0a1a';
+
+      // Background gradient
+      const bgGrad = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, 0, canvas.width / 2, canvas.height / 2, canvas.width * 0.7);
+      bgGrad.addColorStop(0, '#0d0d2b');
+      bgGrad.addColorStop(0.5, '#0a0a1f');
+      bgGrad.addColorStop(1, '#050510');
+      ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Subtle grid (follows camera)
-      ctx.strokeStyle = 'rgba(123,104,238,0.06)';
+      // Subtle dot grid (follows camera)
+      ctx.fillStyle = 'rgba(123,104,238,0.08)';
+      const dotStep = 50;
+      const dotStartX = -(fmCamX % dotStep);
+      const dotStartY = -(fmCamY % dotStep);
+      for (let x = dotStartX; x <= canvas.width; x += dotStep) {
+        for (let y = dotStartY; y <= canvas.height; y += dotStep) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Crosshair grid lines (subtle, every 200px world)
+      ctx.strokeStyle = 'rgba(123,104,238,0.04)';
       ctx.lineWidth = 1;
-      const gridStep = 50;
-      const startX = -(fmCamX % gridStep);
-      const startY = -(fmCamY % gridStep);
-      for (let x = startX; x <= canvas.width; x += gridStep) {
+      const lineStep = 200;
+      const lineStartX = -(fmCamX % lineStep);
+      const lineStartY = -(fmCamY % lineStep);
+      for (let x = lineStartX; x <= canvas.width; x += lineStep) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
       }
-      for (let y = startY; y <= canvas.height; y += gridStep) {
+      for (let y = lineStartY; y <= canvas.height; y += lineStep) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       }
 
-      // Boundary line (world coords)
+      // Decorative nebula blobs (world-space, subtle)
+      const nebulaPositions = [
+        { x: 300, y: 300, r: 250, color: 'rgba(123,104,238,0.03)' },
+        { x: 1700, y: 500, r: 300, color: 'rgba(0,255,204,0.02)' },
+        { x: 900, y: 1500, r: 280, color: 'rgba(255,110,196,0.02)' },
+        { x: 400, y: 1700, r: 220, color: 'rgba(255,215,0,0.02)' },
+        { x: 1500, y: 1600, r: 260, color: 'rgba(123,104,238,0.03)' },
+      ];
+      for (const n of nebulaPositions) {
+        const ns = fmWorldToScreen(n.x, n.y);
+        if (ns.x > -n.r && ns.x < canvas.width + n.r && ns.y > -n.r && ns.y < canvas.height + n.r) {
+          const g = ctx.createRadialGradient(ns.x, ns.y, 0, ns.x, ns.y, n.r);
+          g.addColorStop(0, n.color);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(ns.x - n.r, ns.y - n.r, n.r * 2, n.r * 2);
+        }
+      }
+
+      // Boundary glow
       if (!fmWrapMode) {
         const tl = fmWorldToScreen(FM_BOUNDARY_MARGIN, FM_BOUNDARY_MARGIN);
-        ctx.strokeStyle = 'rgba(255,68,68,0.3)';
+        const bw = FM_WORLD_W - FM_BOUNDARY_MARGIN * 2;
+        const bh = FM_WORLD_H - FM_BOUNDARY_MARGIN * 2;
+        const pulse = Math.sin(frameCount * 0.06) * 0.15 + 0.35;
+        // Outer glow
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,68,68,${pulse * 0.6})`;
+        ctx.lineWidth = 4;
+        ctx.shadowBlur = 30; ctx.shadowColor = 'rgba(255,68,68,0.5)';
+        ctx.strokeRect(tl.x, tl.y, bw, bh);
+        // Inner line
+        ctx.strokeStyle = `rgba(255,68,68,${pulse * 0.3})`;
+        ctx.lineWidth = 1;
+        ctx.shadowBlur = 0;
+        ctx.strokeRect(tl.x + 4, tl.y + 4, bw - 8, bh - 8);
+        ctx.restore();
+
+        // Corner markers
+        const corners = [
+          { x: tl.x, y: tl.y },
+          { x: tl.x + bw, y: tl.y },
+          { x: tl.x, y: tl.y + bh },
+          { x: tl.x + bw, y: tl.y + bh },
+        ];
+        ctx.save();
+        ctx.strokeStyle = `rgba(0,255,204,${pulse})`;
         ctx.lineWidth = 2;
-        ctx.strokeRect(tl.x, tl.y, FM_WORLD_W - FM_BOUNDARY_MARGIN * 2, FM_WORLD_H - FM_BOUNDARY_MARGIN * 2);
+        ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(0,255,204,0.5)';
+        const cm = 20;
+        for (const c of corners) {
+          const dx = c.x === tl.x ? 1 : -1;
+          const dy = c.y === tl.y ? 1 : -1;
+          ctx.beginPath();
+          ctx.moveTo(c.x, c.y + dy * cm); ctx.lineTo(c.x, c.y); ctx.lineTo(c.x + dx * cm, c.y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      } else {
+        // Wrap mode: subtle border shimmer
+        const pulse = Math.sin(frameCount * 0.08) * 0.3 + 0.5;
+        const tl = fmWorldToScreen(0, 0);
+        ctx.save();
+        ctx.strokeStyle = `rgba(0,255,204,${pulse * 0.4})`;
+        ctx.lineWidth = 4;
+        ctx.shadowBlur = 15; ctx.shadowColor = `rgba(0,255,204,${pulse * 0.6})`;
+        ctx.strokeRect(tl.x, tl.y, FM_WORLD_W, FM_WORLD_H);
+        ctx.restore();
       }
 
       // Foods
