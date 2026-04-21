@@ -2383,18 +2383,8 @@
         fmSpawnPowerup();
       }
 
-      // Self-collision (skip first FM_SELF_SKIP segments)
-      if (fmBuffs.invincible <= 0 && fmTrail.length > FM_SELF_SKIP * FM_SEGMENT_GAP) {
-        for (let i = FM_SELF_SKIP * FM_SEGMENT_GAP; i < fmTrail.length; i += Math.max(1, FM_SEGMENT_GAP / 2)) {
-          if (fmDist(fmHeadX, fmHeadY, fmTrail[i].x, fmTrail[i].y) < FM_HEAD_RADIUS * 1.5) {
-            fmAlive = false;
-            playDeathSFX();
-            endSoloGame('collision');
-            fmAnimId = null;
-            return;
-          }
-        }
-      }
+      // Free move mode: snake can pass through its own body (like Slither.io)
+      // Self-collision is disabled — only wall and other snakes cause death
 
       // Sync state for HUD
       const snake = fmTrailToSnake();
