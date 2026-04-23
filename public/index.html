@@ -987,7 +987,7 @@
       }
       gameSnakes.forEach(s => {
         const len = s.snake ? s.snake.length : 0;
-        const spdMult = Math.min(1 + Math.max(0, len - 3) * 0.04, 2.5);
+        const spdMult = 1 + Math.max(0, len - 3) * 0.04;
         let speed = spdMult;
         if (s.buffs) {
           if (s.buffs.speedUp > 0) speed *= 1.8;
@@ -1545,7 +1545,6 @@
     let soloStarted = false;
     let soloTickAccum = 0;
     const SOLO_LENGTH_SPEED_FACTOR = 0.04;
-    const SOLO_MAX_LENGTH_SPEED = 2.5;
 
     // --- Solo Bot AI ---
     let soloBots = [];
@@ -1734,7 +1733,7 @@
       if (buffs.speedUp > 0) mult *= 1.8;
       if (buffs.speedDown > 0) mult *= 0.5;
       const lengthBonus = 1 + Math.max(0, snakeLen - 3) * SOLO_LENGTH_SPEED_FACTOR;
-      mult *= Math.min(lengthBonus, SOLO_MAX_LENGTH_SPEED);
+      mult *= lengthBonus;
       return mult;
     }
 
@@ -2110,7 +2109,6 @@
     const FM_INITIAL_LENGTH = 10;
     const FM_SELF_SKIP = 10;     // segments to skip for self-collision
     const FM_LENGTH_SPEED_FACTOR = 0.02;
-    const FM_MAX_LENGTH_SPEED = 2.0;
     const FM_FOOD_COUNT = 15;
     const FM_POWERUP_MAX = 4;
     const FM_POWERUP_SPAWN_SEC = 6;
@@ -2209,7 +2207,7 @@
       if (fmBuffs.speedDown > 0) speed *= 0.5;
       const segCount = Math.floor(fmTrail.length / FM_SEGMENT_GAP);
       const lengthBonus = 1 + Math.max(0, segCount - FM_INITIAL_LENGTH) * FM_LENGTH_SPEED_FACTOR;
-      speed *= Math.min(lengthBonus, FM_MAX_LENGTH_SPEED);
+      speed *= lengthBonus;
       return speed;
     }
 

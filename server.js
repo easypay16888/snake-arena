@@ -18,7 +18,6 @@ const COLOR_NAMES = ['粉', '青', '金', '紫'];
 const POWERUP_TYPES = ['double', 'speedUp', 'speedDown', 'magnet', 'reverse', 'invincible'];
 const POWERUP_WEIGHTS = [25, 15, 15, 15, 15, 15]; // spawn weights
 const LENGTH_SPEED_FACTOR = 0.04; // speed multiplier increase per extra segment
-const MAX_LENGTH_SPEED = 2.5; // cap for length-based speed bonus
 const POWERUP_TTL = 150; // 15 seconds at 10 ticks/sec
 
 const app = express();
@@ -332,7 +331,7 @@ function getTickMultiplier(player) {
   if (player.buffs.speedUp > 0) mult *= 1.8;
   if (player.buffs.speedDown > 0) mult *= 0.5;
   const lengthBonus = 1 + Math.max(0, player.snake.length - 3) * LENGTH_SPEED_FACTOR;
-  mult *= Math.min(lengthBonus, MAX_LENGTH_SPEED);
+  mult *= lengthBonus;
   return mult;
 }
 
