@@ -1822,7 +1822,8 @@
         }
       }
 
-      for (let i = 0; i < 2; i++) spawnSoloFood();
+      const foodCount = Math.max(2, 1 + soloBots.length);
+      for (let i = 0; i < foodCount; i++) spawnSoloFood();
       gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake: [...soloSnake], direction: soloDir, score: 0, alive: true, buffs: { ...soloBuffs } }];
       gameFoods = soloFoods;
       gamePowerups = soloPowerups;

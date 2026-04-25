@@ -5,7 +5,6 @@ const os = require('os');
 
 const PORT = 8088;
 const GRID = 40;
-const FOOD_COUNT = 2;
 const MAX_PLAYERS = 4;
 let matchTime = 120;
 const TICK_MS = 100;
@@ -117,7 +116,8 @@ function initGame() {
 
   foods = [];
   powerups = [];
-  for (let i = 0; i < FOOD_COUNT; i++) spawnFood();
+  const foodCount = Math.max(2, players.length);
+  for (let i = 0; i < foodCount; i++) spawnFood();
   timer = matchTime;
 }
 
