@@ -1030,6 +1030,33 @@
     // --- Particles ---
     let particles = [];
 
+    function createParticles(x, y, color, count) {
+      let r, g, b;
+      if (color.startsWith('#')) {
+        r = parseInt(color.slice(1, 3), 16);
+        g = parseInt(color.slice(3, 5), 16);
+        b = parseInt(color.slice(5, 7), 16);
+      } else if (color.startsWith('rgb')) {
+        const m = color.match(/(\d+)/g);
+        r = parseInt(m[0]); g = parseInt(m[1]); b = parseInt(m[2]);
+      } else {
+        r = 255; g = 255; b = 255;
+      }
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x: x + (Math.random() - 0.5) * 20,
+          y: y + (Math.random() - 0.5) * 20,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          life: 1,
+          colorR: r,
+          colorG: g,
+          colorB: b,
+          size: Math.random() * 3 + 2,
+        });
+      }
+    }
+
     function updateAndDrawParticles() {
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
@@ -1744,13 +1771,9 @@
       soloMoveMode = document.getElementById('soloMoveMode').value;
       const botToggle = document.getElementById('soloBotToggle');
       const botCountToggle = document.getElementById('soloBotCountToggle');
-      if (soloMoveMode === 'free') {
-        botToggle.style.display = 'none';
-        botCountToggle.style.display = 'none';
-      } else {
-        botToggle.style.display = 'flex';
-        if (soloBotEnabled) botCountToggle.style.display = 'flex';
-      }
+      botToggle.style.display = 'flex';
+      if (soloBotEnabled) botCountToggle.style.display = 'flex';
+      else botCountToggle.style.display = 'none';
     }
 
     function updateSoloSetup() {
@@ -2055,7 +2078,11 @@
       const score = soloMoveMode === 'free' ? fmScore : soloScore;
       const alive = soloMoveMode === 'free' ? fmAlive : soloAlive;
       const rankings = [{ name: myName, color: getSnakeColor(), score, alive }];
-      if (soloMoveMode !== 'free') {
+      if (soloMoveMode === 'free') {
+        for (const bot of fmBots) {
+          rankings.push({ name: bot.name, color: bot.color, score: bot.score, alive: bot.alive });
+        }
+      } else {
         for (const bot of soloBots) {
           rankings.push({ name: bot.name, color: bot.color, score: bot.score, alive: bot.alive });
         }
@@ -2099,6 +2126,7 @@
     let fmWrapMode = false;
     let fmCamX = 0, fmCamY = 0;
     let fmBgCanvas = null; // cached background texture
+    let fmBots = [];
 
     const FM_SPEED = 180;        // base speed pixels/sec
     const FM_TURN_RATE = 4.5;    // radians/sec
@@ -2128,6 +2156,69 @@
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
       return current + diff * t;
+    }
+
+    function createFmBot(idx, total) {
+      const margin = 80;
+      const startPositions = [
+        { x: margin, y: margin },
+        { x: FM_WORLD_W - margin, y: margin },
+        { x: margin, y: FM_WORLD_H - margin },
+        { x: FM_WORLD_W - margin, y: FM_WORLD_H - margin },
+      ];
+      const pos = startPositions[idx % startPositions.length];
+      const colors = ['#ff4444', '#44aaff', '#ffaa00', '#aa44ff'];
+      const names = ['🤖Alpha', '🤖Beta', '🤖Gamma', '🤖Delta'];
+      const angle = Math.atan2(FM_WORLD_H / 2 - pos.y, FM_WORLD_W / 2 - pos.x);
+      const trail = [];
+      const len = FM_INITIAL_LENGTH;
+      for (let i = 0; i < len * FM_SEGMENT_GAP; i++) {
+        trail.push({ x: pos.x - Math.cos(angle) * i * 0.5, y: pos.y - Math.sin(angle) * i * 0.5 });
+      }
+      return {
+        id: 'fmbot' + idx,
+        name: names[idx % names.length],
+        color: colors[idx % colors.length],
+        headX: pos.x,
+        headY: pos.y,
+        angle: angle,
+        targetAngle: angle,
+        trail: trail,
+        length: len,
+        score: 0,
+        alive: true,
+        buffs: { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 },
+        speed: FM_SPEED,
+        turnRate: FM_TURN_RATE * 0.75,
+      };
+    }
+
+    function fmBotTargetAngle(bot) {
+      let target = null;
+      let nearestDist = Infinity;
+      for (const f of fmFoods) {
+        const d = fmDist(bot.headX, bot.headY, f.x, f.y);
+        if (d < nearestDist) { nearestDist = d; target = f; }
+      }
+      for (const pu of fmPowerups) {
+        const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
+        if (d < 200 && d < nearestDist) { nearestDist = d; target = pu; }
+      }
+      if (target) {
+        return Math.atan2(target.y - bot.headY, target.x - bot.headX);
+      }
+      // Wander toward center if no food
+      return Math.atan2(FM_WORLD_H / 2 - bot.headY, FM_WORLD_W / 2 - bot.headX);
+    }
+
+    function fmBotGetSpeed(bot) {
+      let speed = bot.speed;
+      if (bot.buffs.speedUp > 0) speed *= 1.8;
+      if (bot.buffs.speedDown > 0) speed *= 0.5;
+      const segCount = Math.floor(bot.trail.length / FM_SEGMENT_GAP);
+      const lengthBonus = 1 + Math.max(0, segCount - FM_INITIAL_LENGTH) * FM_LENGTH_SPEED_FACTOR;
+      speed *= lengthBonus;
+      return speed;
     }
 
     function fmDist(x1, y1, x2, y2) {
@@ -2236,6 +2327,16 @@
       fmPowerupTimer = 0;
       fmWrapMode = soloWrapMode;
       for (let i = 0; i < FM_FOOD_COUNT; i++) fmSpawnFood();
+
+      // Initialize free-move bots
+      fmBots = [];
+      if (soloBotEnabled) {
+        const botCount = parseInt(document.getElementById('soloBotCount').value) || 1;
+        for (let i = 0; i < botCount; i++) {
+          fmBots.push(createFmBot(i, botCount));
+        }
+      }
+
       gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake: fmTrailToSnake(), direction: { x: 1, y: 0 }, score: 0, alive: true, buffs: { ...fmBuffs } }];
       gameFoods = fmFoods;
       gamePowerups = fmPowerups;
@@ -2258,8 +2359,12 @@
         const y = margin + Math.random() * (FM_WORLD_H - margin * 2);
         const r = FM_FOOD_RADIUS_MIN + Math.random() * (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN);
         const tooClose = fmFoods.some(f => fmDist(x, y, f.x, f.y) < 40);
-        const onSnake = fmTrail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + r);
-        if (!tooClose && !onSnake) {
+        const onPlayer = fmTrail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + r);
+        let onBot = false;
+        for (const bot of fmBots) {
+          if (bot.trail.some(t => fmDist(x, y, t.x, t.y) < FM_HEAD_RADIUS + r)) { onBot = true; break; }
+        }
+        if (!tooClose && !onPlayer && !onBot) {
           fmFoods.push({ x, y, r, id: Math.random().toString(36).slice(2, 6) });
           return;
         }
@@ -2305,6 +2410,17 @@
         case 'magnet': fmBuffs.magnet = 15; break;
         case 'reverse': fmBuffs.reverse = 15; break;
         case 'invincible': fmBuffs.invincible = 15; break;
+      }
+    }
+
+    function fmBotApplyBuff(bot, type) {
+      switch (type) {
+        case 'double': bot.buffs.double = 15; break;
+        case 'speedUp': bot.buffs.speedUp = 15; break;
+        case 'speedDown': bot.buffs.speedDown = 15; break;
+        case 'magnet': bot.buffs.magnet = 15; break;
+        case 'reverse': bot.buffs.reverse = 15; break;
+        case 'invincible': bot.buffs.invincible = 15; break;
       }
     }
 
@@ -2397,6 +2513,158 @@
       // Free move mode: snake can pass through its own body (like Slither.io)
       // Self-collision is disabled — only wall and other snakes cause death
 
+      // --- Bot update ---
+      for (const bot of fmBots) {
+        if (!bot.alive) continue;
+
+        // AI: turn toward target
+        const desiredAngle = fmBotTargetAngle(bot);
+        const turnAmount = bot.turnRate * dt;
+        bot.angle = angleLerp(bot.angle, desiredAngle, Math.min(turnAmount, 1));
+
+        // Movement
+        const bSpeed = fmBotGetSpeed(bot);
+        bot.headX += Math.cos(bot.angle) * bSpeed * dt;
+        bot.headY += Math.sin(bot.angle) * bSpeed * dt;
+
+        // Boundary
+        const bm = FM_BOUNDARY_MARGIN;
+        if (fmWrapMode) {
+          if (bot.headX < 0) bot.headX += FM_WORLD_W;
+          if (bot.headX >= FM_WORLD_W) bot.headX -= FM_WORLD_W;
+          if (bot.headY < 0) bot.headY += FM_WORLD_H;
+          if (bot.headY >= FM_WORLD_H) bot.headY -= FM_WORLD_H;
+        } else {
+          if (bot.headX < bm || bot.headX > FM_WORLD_W - bm || bot.headY < bm || bot.headY > FM_WORLD_H - bm) {
+            if (bot.buffs.invincible > 0) {
+              bot.headX = Math.max(bm, Math.min(FM_WORLD_W - bm, bot.headX));
+              bot.headY = Math.max(bm, Math.min(FM_WORLD_H - bm, bot.headY));
+              bot.angle += Math.PI;
+            } else {
+              bot.alive = false;
+              createParticles(bot.headX, bot.headY, bot.color, 20);
+              continue;
+            }
+          }
+        }
+
+        // Trail
+        bot.trail.unshift({ x: bot.headX, y: bot.headY });
+        const botMaxTrailLen = bot.length * FM_SEGMENT_GAP;
+        while (bot.trail.length > botMaxTrailLen) bot.trail.pop();
+
+        // Buff timers
+        for (const k in bot.buffs) { if (bot.buffs[k] > 0) bot.buffs[k] -= dt; }
+
+        // Food collision
+        for (let i = fmFoods.length - 1; i >= 0; i--) {
+          const foodR = fmFoods[i].r || FM_FOOD_RADIUS_MIN;
+          if (fmDist(bot.headX, bot.headY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + foodR) {
+            const sizeBonus = Math.round((foodR - FM_FOOD_RADIUS_MIN) / (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN) * 15);
+            const gain = bot.buffs.double > 0 ? (10 + sizeBonus) * 2 : 10 + sizeBonus;
+            bot.score += gain;
+            bot.length += 1;
+            fmFoods.splice(i, 1);
+            fmSpawnFood();
+          }
+        }
+
+        // Powerup collision
+        for (let i = fmPowerups.length - 1; i >= 0; i--) {
+          if (fmDist(bot.headX, bot.headY, fmPowerups[i].x, fmPowerups[i].y) < FM_HEAD_RADIUS + FM_POWERUP_RADIUS) {
+            fmBotApplyBuff(bot, fmPowerups[i].type);
+            fmPowerups.splice(i, 1);
+          }
+        }
+      }
+
+      // --- Inter-snake collision: player vs bots ---
+      if (fmAlive) {
+        for (const bot of fmBots) {
+          if (!bot.alive) continue;
+
+          // Player head hits bot body
+          for (let i = FM_SEGMENT_GAP; i < bot.trail.length; i += FM_SEGMENT_GAP) {
+            if (fmDist(fmHeadX, fmHeadY, bot.trail[i].x, bot.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
+              if (fmBuffs.invincible <= 0) {
+                fmAlive = false;
+                playDeathSFX();
+                endSoloGame('collision');
+                fmAnimId = null;
+                return;
+              }
+            }
+          }
+
+          // Bot head hits player body
+          for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP) {
+            if (fmDist(bot.headX, bot.headY, fmTrail[i].x, fmTrail[i].y) < FM_HEAD_RADIUS * 1.5) {
+              if (bot.buffs.invincible <= 0) {
+                bot.alive = false;
+                createParticles(bot.headX, bot.headY, bot.color, 20);
+              }
+              break;
+            }
+          }
+
+          // Head-to-head collision
+          if (fmDist(fmHeadX, fmHeadY, bot.headX, bot.headY) < FM_HEAD_RADIUS * 2) {
+            if (fmBuffs.invincible <= 0 && bot.buffs.invincible <= 0) {
+              // Both die on head-to-head
+              fmAlive = false;
+              playDeathSFX();
+              bot.alive = false;
+              createParticles(bot.headX, bot.headY, bot.color, 20);
+              endSoloGame('collision');
+              fmAnimId = null;
+              return;
+            } else if (fmBuffs.invincible <= 0) {
+              fmAlive = false;
+              playDeathSFX();
+              endSoloGame('collision');
+              fmAnimId = null;
+              return;
+            } else if (bot.buffs.invincible <= 0) {
+              bot.alive = false;
+              createParticles(bot.headX, bot.headY, bot.color, 20);
+            }
+          }
+        }
+      }
+
+      // --- Bot vs bot collision ---
+      for (let a = 0; a < fmBots.length; a++) {
+        const botA = fmBots[a];
+        if (!botA.alive) continue;
+        for (let b = a + 1; b < fmBots.length; b++) {
+          const botB = fmBots[b];
+          if (!botB.alive) continue;
+
+          // Head-to-head
+          if (fmDist(botA.headX, botA.headY, botB.headX, botB.headY) < FM_HEAD_RADIUS * 2) {
+            if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); }
+            if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); }
+            continue;
+          }
+
+          // A head hits B body
+          for (let i = FM_SEGMENT_GAP; i < botB.trail.length; i += FM_SEGMENT_GAP) {
+            if (fmDist(botA.headX, botA.headY, botB.trail[i].x, botB.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
+              if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); }
+              break;
+            }
+          }
+
+          // B head hits A body
+          for (let i = FM_SEGMENT_GAP; i < botA.trail.length; i += FM_SEGMENT_GAP) {
+            if (fmDist(botB.headX, botB.headY, botA.trail[i].x, botA.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
+              if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); }
+              break;
+            }
+          }
+        }
+      }
+
       // Camera: keep head centered
       fmCamX = fmHeadX - canvas.width / 2;
       fmCamY = fmHeadY - canvas.height / 2;
@@ -2407,7 +2675,15 @@
 
       // Sync state for HUD
       const snake = fmTrailToSnake();
-      gameSnakes = [{ id: 'solo', name: myName, color: getSnakeColor(), snake, direction: { x: Math.cos(fmAngle) > 0 ? 1 : -1, y: Math.sin(fmAngle) > 0 ? 1 : -1 }, score: fmScore, alive: fmAlive, buffs: { ...fmBuffs } }];
+      const snakeList = [{ id: 'solo', name: myName, color: getSnakeColor(), snake, direction: { x: Math.cos(fmAngle) > 0 ? 1 : -1, y: Math.sin(fmAngle) > 0 ? 1 : -1 }, score: fmScore, alive: fmAlive, buffs: { ...fmBuffs } }];
+      for (const bot of fmBots) {
+        const botSegs = [];
+        for (let i = 0; i < bot.trail.length; i += FM_SEGMENT_GAP) {
+          botSegs.push({ x: Math.floor(bot.trail[i].x / CELL), y: Math.floor(bot.trail[i].y / CELL) });
+        }
+        snakeList.push({ id: bot.id, name: bot.name, color: bot.color, snake: botSegs, direction: { x: Math.cos(bot.angle) > 0 ? 1 : -1, y: Math.sin(bot.angle) > 0 ? 1 : -1 }, score: bot.score, alive: bot.alive, buffs: { ...bot.buffs } });
+      }
+      gameSnakes = snakeList;
       gameFoods = fmFoods;
       gamePowerups = fmPowerups;
       gameTimer = fmTimerVal;
@@ -2643,6 +2919,17 @@
         ctx.fill();
       }
 
+      // Bot heads
+      for (const bot of fmBots) {
+        if (bot.alive) {
+          ctx.fillStyle = bot.color;
+          ctx.shadowBlur = 3; ctx.shadowColor = bot.color;
+          ctx.beginPath();
+          ctx.arc(mx + bot.headX * scaleX, my + bot.headY * scaleY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
       ctx.restore();
     }
 
@@ -2733,32 +3020,27 @@
       ctx.restore();
     }
 
-    function drawFreeMoveSnake() {
-      const skin = SKINS.find(s => s.id === currentSkin) || SKINS[0];
-      const colors = skin.colors;
-      const isMultiColor = colors.length > 2;
-      const color = isMultiColor ? colors[0] : colors[0];
-
-      ctx.save();
-      ctx.translate(-fmCamX, -fmCamY);
+    function drawFmSingleSnake(headX, headY, angle, trail, length, color, buffs, isPlayer) {
+      const rgb = hexToRgb(color);
+      const r = FM_HEAD_RADIUS;
 
       // Body glow line
-      if (fmTrail.length > 1) {
+      if (trail.length > 1) {
         ctx.save();
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.strokeStyle = color;
-        ctx.lineWidth = FM_HEAD_RADIUS * 1.2;
+        ctx.lineWidth = r * 1.2;
         ctx.shadowBlur = 15; ctx.shadowColor = color;
         ctx.globalAlpha = 0.4;
         ctx.beginPath();
-        ctx.moveTo(fmTrail[0].x, fmTrail[0].y);
-        for (let i = 1; i < fmTrail.length; i++) {
-          if (fmWrapMode && fmDist(fmTrail[i].x, fmTrail[i].y, fmTrail[i-1].x, fmTrail[i-1].y) > 50) {
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+          if (fmWrapMode && fmDist(trail[i].x, trail[i].y, trail[i-1].x, trail[i-1].y) > 50) {
             ctx.stroke();
             ctx.beginPath();
-            ctx.moveTo(fmTrail[i].x, fmTrail[i].y);
+            ctx.moveTo(trail[i].x, trail[i].y);
           } else {
-            ctx.lineTo(fmTrail[i].x, fmTrail[i].y);
+            ctx.lineTo(trail[i].x, trail[i].y);
           }
         }
         ctx.stroke();
@@ -2766,49 +3048,44 @@
       }
 
       // Body segments
-      for (let i = fmTrail.length - 1; i >= FM_SEGMENT_GAP; i -= FM_SEGMENT_GAP) {
-        const seg = fmTrail[i];
-        const segIdx = Math.floor(i / FM_SEGMENT_GAP);
-        const segColor = isMultiColor ? colors[segIdx % colors.length] : color;
-        const rgb = hexToRgb(segColor);
-        const r = FM_HEAD_RADIUS * 0.85;
-
+      for (let i = trail.length - 1; i >= FM_SEGMENT_GAP; i -= FM_SEGMENT_GAP) {
+        const seg = trail[i];
+        const segR = r * 0.85;
         ctx.save();
-        ctx.shadowBlur = 8; ctx.shadowColor = segColor;
-        const grad = ctx.createRadialGradient(seg.x - r * 0.3, seg.y - r * 0.3, r * 0.2, seg.x, seg.y, r);
+        ctx.shadowBlur = 8; ctx.shadowColor = color;
+        const grad = ctx.createRadialGradient(seg.x - segR * 0.3, seg.y - segR * 0.3, segR * 0.2, seg.x, seg.y, segR);
         grad.addColorStop(0, `rgba(${rgb},0.95)`);
         grad.addColorStop(0.5, `rgba(${rgb},0.7)`);
         grad.addColorStop(1, `rgba(${rgb},0.35)`);
         ctx.fillStyle = grad;
-        ctx.beginPath(); ctx.arc(seg.x, seg.y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(seg.x, seg.y, segR, 0, Math.PI * 2); ctx.fill();
 
         ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(seg.x - r * 0.25, seg.y - r * 0.25, r * 0.25, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(seg.x - segR * 0.25, seg.y - segR * 0.25, segR * 0.25, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
       }
 
       // Head
       const pulse = Math.sin(frameCount * 0.25) * 0.12;
-      const headR = FM_HEAD_RADIUS * (1 + pulse);
-      const rgb = hexToRgb(color);
+      const headR = r * (1 + pulse);
       ctx.save();
       ctx.shadowBlur = 25; ctx.shadowColor = color;
-      const grad = ctx.createRadialGradient(fmHeadX - headR * 0.3, fmHeadY - headR * 0.3, headR * 0.2, fmHeadX, fmHeadY, headR);
+      const grad = ctx.createRadialGradient(headX - headR * 0.3, headY - headR * 0.3, headR * 0.2, headX, headY, headR);
       grad.addColorStop(0, `rgba(${rgb},0.95)`);
       grad.addColorStop(0.5, `rgba(${rgb},0.7)`);
       grad.addColorStop(1, `rgba(${rgb},0.35)`);
       ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, headR, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(headX, headY, headR, 0, Math.PI * 2); ctx.fill();
 
       // Eyes
-      const eyeOff = FM_HEAD_RADIUS * 0.4;
-      const eyeSpread = FM_HEAD_RADIUS * 0.4;
-      const fwdX = Math.cos(fmAngle), fwdY = Math.sin(fmAngle);
+      const eyeOff = r * 0.4;
+      const eyeSpread = r * 0.4;
+      const fwdX = Math.cos(angle), fwdY = Math.sin(angle);
       const perpX = -fwdY, perpY = fwdX;
-      const leX = fmHeadX + fwdX * eyeOff + perpX * eyeSpread;
-      const leY = fmHeadY + fwdY * eyeOff + perpY * eyeSpread;
-      const reX = fmHeadX + fwdX * eyeOff - perpX * eyeSpread;
-      const reY = fmHeadY + fwdY * eyeOff - perpY * eyeSpread;
+      const leX = headX + fwdX * eyeOff + perpX * eyeSpread;
+      const leY = headY + fwdY * eyeOff + perpY * eyeSpread;
+      const reX = headX + fwdX * eyeOff - perpX * eyeSpread;
+      const reY = headY + fwdY * eyeOff - perpY * eyeSpread;
 
       ctx.globalAlpha = 1; ctx.shadowBlur = 6; ctx.shadowColor = '#ffffff';
       ctx.fillStyle = '#ffffff';
@@ -2821,42 +3098,61 @@
       ctx.restore();
 
       // Invincible shield
-      if (fmBuffs.invincible > 0) {
+      if (buffs.invincible > 0) {
         const shimmer = Math.sin(frameCount * 0.4) * 0.3 + 0.5;
         ctx.save();
         ctx.globalAlpha = shimmer;
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
         ctx.shadowBlur = 20; ctx.shadowColor = '#ffffff';
-        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_HEAD_RADIUS * 1.8, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(headX, headY, r * 1.8, 0, Math.PI * 2); ctx.stroke();
         ctx.globalAlpha = shimmer * 0.4;
-        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_HEAD_RADIUS * 2.3, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(headX, headY, r * 2.3, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
       }
 
-      // Magnet aura
-      if (fmBuffs.magnet > 0) {
+      // Magnet aura (player only)
+      if (isPlayer && buffs.magnet > 0) {
         const magPulse = Math.sin(frameCount * 0.15) * 0.2 + 0.3;
         ctx.save();
         ctx.globalAlpha = magPulse;
         ctx.strokeStyle = '#ff88cc'; ctx.lineWidth = 1.5;
         ctx.setLineDash([4, 6]); ctx.shadowBlur = 10; ctx.shadowColor = '#ff88cc';
-        ctx.beginPath(); ctx.arc(fmHeadX, fmHeadY, FM_MAGNET_RANGE, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(headX, headY, FM_MAGNET_RANGE, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
       }
 
       // Double score indicator
-      if (fmBuffs.double > 0) {
+      if (buffs.double > 0) {
         ctx.save();
         ctx.globalAlpha = 0.8 + Math.sin(frameCount * 0.3) * 0.2;
         ctx.font = 'bold 11px Segoe UI'; ctx.fillStyle = '#ffd700';
         ctx.shadowBlur = 6; ctx.shadowColor = '#ffd700';
         ctx.textAlign = 'center';
-        ctx.fillText('2x', fmHeadX, fmHeadY - FM_HEAD_RADIUS - 4);
+        ctx.fillText('2x', headX, headY - r - 4);
         ctx.restore();
       }
+    }
 
-      ctx.restore(); // camera transform
+    function drawFreeMoveSnake() {
+      ctx.save();
+      ctx.translate(-fmCamX, -fmCamY);
+
+      // Draw bots first (behind player)
+      for (const bot of fmBots) {
+        if (bot.alive) {
+          drawFmSingleSnake(bot.headX, bot.headY, bot.angle, bot.trail, bot.length, bot.color, bot.buffs, false);
+        }
+      }
+
+      // Draw player
+      if (fmAlive) {
+        const skin = SKINS.find(s => s.id === currentSkin) || SKINS[0];
+        const pColor = skin.colors[0];
+        drawFmSingleSnake(fmHeadX, fmHeadY, fmAngle, fmTrail, fmLength, pColor, fmBuffs, true);
+      }
+
+      ctx.restore();
     }
 
     // --- Start render loop ---
