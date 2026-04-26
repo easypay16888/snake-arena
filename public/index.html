@@ -2194,21 +2194,90 @@
     }
 
     function fmBotTargetAngle(bot) {
-      let target = null;
+      let tx = 0, ty = 0;
+
+      // 1. Seek nearest food / powerup
       let nearestDist = Infinity;
+      let target = null;
       for (const f of fmFoods) {
         const d = fmDist(bot.headX, bot.headY, f.x, f.y);
         if (d < nearestDist) { nearestDist = d; target = f; }
       }
       for (const pu of fmPowerups) {
         const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
-        if (d < 200 && d < nearestDist) { nearestDist = d; target = pu; }
+        if (d < 250 && d < nearestDist) { nearestDist = d; target = pu; }
       }
       if (target) {
-        return Math.atan2(target.y - bot.headY, target.x - bot.headX);
+        tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * 3;
+        ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * 3;
+      } else {
+        tx += (FM_WORLD_W / 2 - bot.headX) / FM_WORLD_W;
+        ty += (FM_WORLD_H / 2 - bot.headY) / FM_WORLD_H;
       }
-      // Wander toward center if no food
-      return Math.atan2(FM_WORLD_H / 2 - bot.headY, FM_WORLD_W / 2 - bot.headX);
+
+      // 2. Avoid walls / boundaries
+      const warnDist = 120;
+      const m = FM_BOUNDARY_MARGIN;
+      if (!fmWrapMode) {
+        if (bot.headX < m + warnDist) tx += 2.5 * ((m + warnDist - bot.headX) / warnDist);
+        if (bot.headX > FM_WORLD_W - m - warnDist) tx -= 2.5 * ((bot.headX - (FM_WORLD_W - m - warnDist)) / warnDist);
+        if (bot.headY < m + warnDist) ty += 2.5 * ((m + warnDist - bot.headY) / warnDist);
+        if (bot.headY > FM_WORLD_H - m - warnDist) ty -= 2.5 * ((bot.headY - (FM_WORLD_H - m - warnDist)) / warnDist);
+      }
+
+      // 3. Avoid other snakes' bodies (ray cast ahead)
+      const lookAhead = 80;
+      const feelerAngle = bot.angle;
+      const fx = bot.headX + Math.cos(feelerAngle) * lookAhead;
+      const fy = bot.headY + Math.sin(feelerAngle) * lookAhead;
+
+      // Check player trail
+      for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP) {
+        const seg = fmTrail[i];
+        const d = fmDist(fx, fy, seg.x, seg.y);
+        if (d < FM_HEAD_RADIUS * 2.5) {
+          const dx = bot.headX - seg.x;
+          const dy = bot.headY - seg.y;
+          const dist = Math.max(fmDist(bot.headX, bot.headY, seg.x, seg.y), 1);
+          tx += (dx / dist) * 4;
+          ty += (dy / dist) * 4;
+          break;
+        }
+      }
+
+      // Check other bot trails
+      for (const other of fmBots) {
+        if (other.id === bot.id || !other.alive) continue;
+        for (let i = FM_SEGMENT_GAP; i < other.trail.length; i += FM_SEGMENT_GAP) {
+          const seg = other.trail[i];
+          const d = fmDist(fx, fy, seg.x, seg.y);
+          if (d < FM_HEAD_RADIUS * 2.5) {
+            const dx = bot.headX - seg.x;
+            const dy = bot.headY - seg.y;
+            const dist = Math.max(fmDist(bot.headX, bot.headY, seg.x, seg.y), 1);
+            tx += (dx / dist) * 4;
+            ty += (dy / dist) * 4;
+            break;
+          }
+        }
+      }
+
+      // 4. Avoid head-on collisions with other heads
+      const heads = [{ x: fmHeadX, y: fmHeadY }];
+      for (const other of fmBots) {
+        if (other.id !== bot.id && other.alive) heads.push({ x: other.headX, y: other.headY });
+      }
+      for (const h of heads) {
+        const d = fmDist(bot.headX, bot.headY, h.x, h.y);
+        if (d < FM_HEAD_RADIUS * 4 && d > 0) {
+          const dx = bot.headX - h.x;
+          const dy = bot.headY - h.y;
+          tx += (dx / d) * 3;
+          ty += (dy / d) * 3;
+        }
+      }
+
+      return Math.atan2(ty, tx);
     }
 
     function fmBotGetSpeed(bot) {
