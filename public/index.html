@@ -2196,7 +2196,7 @@
     function fmBotTargetAngle(bot) {
       let tx = 0, ty = 0;
 
-      // 1. Seek nearest food / powerup
+      // 1. Seek nearest food / powerup (weight reduced so obstacles can override)
       let nearestDist = Infinity;
       let target = null;
       for (const f of fmFoods) {
@@ -2205,60 +2205,75 @@
       }
       for (const pu of fmPowerups) {
         const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
-        if (d < 250 && d < nearestDist) { nearestDist = d; target = pu; }
+        if (d < 300 && d < nearestDist) { nearestDist = d; target = pu; }
       }
       if (target) {
-        tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * 3;
-        ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * 3;
+        const weight = Math.min(1.2, 40 / Math.max(nearestDist, 10));
+        tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * weight;
+        ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * weight;
       } else {
         tx += (FM_WORLD_W / 2 - bot.headX) / FM_WORLD_W;
         ty += (FM_WORLD_H / 2 - bot.headY) / FM_WORLD_H;
       }
 
-      // 2. Avoid walls / boundaries
-      const warnDist = 120;
+      // 2. Avoid walls / boundaries (stronger push)
+      const warnDist = 180;
       const m = FM_BOUNDARY_MARGIN;
       if (!fmWrapMode) {
-        if (bot.headX < m + warnDist) tx += 2.5 * ((m + warnDist - bot.headX) / warnDist);
-        if (bot.headX > FM_WORLD_W - m - warnDist) tx -= 2.5 * ((bot.headX - (FM_WORLD_W - m - warnDist)) / warnDist);
-        if (bot.headY < m + warnDist) ty += 2.5 * ((m + warnDist - bot.headY) / warnDist);
-        if (bot.headY > FM_WORLD_H - m - warnDist) ty -= 2.5 * ((bot.headY - (FM_WORLD_H - m - warnDist)) / warnDist);
-      }
-
-      // 3. Avoid other snakes' bodies (ray cast ahead)
-      const lookAhead = 80;
-      const feelerAngle = bot.angle;
-      const fx = bot.headX + Math.cos(feelerAngle) * lookAhead;
-      const fy = bot.headY + Math.sin(feelerAngle) * lookAhead;
-
-      // Check player trail
-      for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP) {
-        const seg = fmTrail[i];
-        const d = fmDist(fx, fy, seg.x, seg.y);
-        if (d < FM_HEAD_RADIUS * 2.5) {
-          const dx = bot.headX - seg.x;
-          const dy = bot.headY - seg.y;
-          const dist = Math.max(fmDist(bot.headX, bot.headY, seg.x, seg.y), 1);
-          tx += (dx / dist) * 4;
-          ty += (dy / dist) * 4;
-          break;
+        const wallWeight = 8;
+        if (bot.headX < m + warnDist) {
+          const f = 1 - (bot.headX - m) / warnDist;
+          tx += wallWeight * f * f;
+        }
+        if (bot.headX > FM_WORLD_W - m - warnDist) {
+          const f = 1 - (FM_WORLD_W - m - bot.headX) / warnDist;
+          tx -= wallWeight * f * f;
+        }
+        if (bot.headY < m + warnDist) {
+          const f = 1 - (bot.headY - m) / warnDist;
+          ty += wallWeight * f * f;
+        }
+        if (bot.headY > FM_WORLD_H - m - warnDist) {
+          const f = 1 - (FM_WORLD_H - m - bot.headY) / warnDist;
+          ty -= wallWeight * f * f;
         }
       }
 
-      // Check other bot trails
+      // 3. Avoid snake bodies — scan 3 feelers (left, center, right)
+      const lookAhead = 140;
+      const feelerSpread = 0.6; // radians (~34° each side)
+      const avoidRadius = FM_HEAD_RADIUS * 3.5;
+      const avoidWeight = 10;
+
+      const allTrails = [];
+      if (fmTrail.length > FM_SEGMENT_GAP * 3) allTrails.push(fmTrail);
       for (const other of fmBots) {
-        if (other.id === bot.id || !other.alive) continue;
-        for (let i = FM_SEGMENT_GAP; i < other.trail.length; i += FM_SEGMENT_GAP) {
-          const seg = other.trail[i];
-          const d = fmDist(fx, fy, seg.x, seg.y);
-          if (d < FM_HEAD_RADIUS * 2.5) {
-            const dx = bot.headX - seg.x;
-            const dy = bot.headY - seg.y;
-            const dist = Math.max(fmDist(bot.headX, bot.headY, seg.x, seg.y), 1);
-            tx += (dx / dist) * 4;
-            ty += (dy / dist) * 4;
-            break;
+        if (other.id !== bot.id && other.alive && other.trail.length > FM_SEGMENT_GAP * 3) {
+          allTrails.push(other.trail);
+        }
+      }
+
+      for (let fi = -1; fi <= 1; fi++) {
+        const fa = bot.angle + fi * feelerSpread;
+        const fx = bot.headX + Math.cos(fa) * lookAhead;
+        const fy = bot.headY + Math.sin(fa) * lookAhead;
+        let hit = false;
+
+        for (const trail of allTrails) {
+          for (let i = FM_SEGMENT_GAP * 2; i < trail.length; i += FM_SEGMENT_GAP) {
+            const seg = trail[i];
+            if (fmDist(fx, fy, seg.x, seg.y) < avoidRadius) {
+              hit = true;
+              break;
+            }
           }
+          if (hit) break;
+        }
+
+        if (hit) {
+          // Steer away from the feeler direction
+          tx -= Math.cos(fa) * avoidWeight;
+          ty -= Math.sin(fa) * avoidWeight;
         }
       }
 
@@ -2269,11 +2284,12 @@
       }
       for (const h of heads) {
         const d = fmDist(bot.headX, bot.headY, h.x, h.y);
-        if (d < FM_HEAD_RADIUS * 4 && d > 0) {
+        if (d < FM_HEAD_RADIUS * 6 && d > 0) {
+          const f = 1 - d / (FM_HEAD_RADIUS * 6);
           const dx = bot.headX - h.x;
           const dy = bot.headY - h.y;
-          tx += (dx / d) * 3;
-          ty += (dy / d) * 3;
+          tx += (dx / d) * 5 * f * f;
+          ty += (dy / d) * 5 * f * f;
         }
       }
 
