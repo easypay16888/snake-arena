@@ -94,6 +94,23 @@ function spawnPowerup() {
   }
 }
 
+function convertBodyToFood(player) {
+  const body = player.snake;
+  for (const seg of body) {
+    foods.push({ x: seg.x, y: seg.y, id: genId() });
+  }
+  // Bonus food based on score (eaten food gets "spit out")
+  const bonusCount = Math.floor(player.score / 10);
+  for (let i = 0; i < bonusCount; i++) {
+    const seg = body[Math.floor(Math.random() * body.length)];
+    const fx = Math.max(0, Math.min(GRID - 1, seg.x + Math.floor(Math.random() * 5) - 2));
+    const fy = Math.max(0, Math.min(GRID - 1, seg.y + Math.floor(Math.random() * 5) - 2));
+    foods.push({ x: fx, y: fy, id: genId() });
+  }
+  player.snake = [];
+  player.score = 0;
+}
+
 const startY = [Math.floor(GRID / 2), Math.floor(GRID / 2), Math.floor(GRID / 2), Math.floor(GRID / 2)];
 const startX = [3, GRID - 4, 3, GRID - 4];
 const startDirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 1, y: 0 }, { x: -1, y: 0 }];
@@ -128,11 +145,9 @@ function buildObstacleSet(exclude) {
   const obs = new Set();
   for (const p of players) {
     if (!p.alive) continue;
+    if (p === exclude) continue; // can pass through own body
     const body = p.snake;
-    const len = body.length;
-    for (let i = 0; i < len; i++) {
-      // Skip last segment of self (tail will move away) unless about to eat
-      if (p === exclude && i === len - 1) continue;
+    for (let i = 0; i < body.length; i++) {
       obs.add(`${body[i].x},${body[i].y}`);
     }
   }
@@ -166,7 +181,13 @@ function calculateBotDirection(p) {
 
   const head = p.snake[0];
   const dir = p.direction;
-  const obstacles = buildObstacleSet(p);
+  const obstacles = buildObstacleSet(p); // other players' bodies (hard block)
+
+  // Own body cells (soft penalty — prefer avoiding but can pass through)
+  const ownBody = new Set();
+  for (let i = 1; i < p.snake.length; i++) {
+    ownBody.add(`${p.snake[i].x},${p.snake[i].y}`);
+  }
 
   let target = null;
   let nearestDist = Infinity;
@@ -207,9 +228,11 @@ function calculateBotDirection(p) {
     const space = floodFill(nx, ny, obstacles);
 
     const distToTarget = target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 999;
+    // Soft penalty for entering own body (prefer avoiding, but can in emergencies)
+    const selfPenalty = ownBody.has(key) ? -300 : 0;
     // Heavy penalty for tight spaces, but still pickable if all else fails
     const spacePenalty = space < p.snake.length ? -500 : 0;
-    const score = space * 10 - distToTarget + spacePenalty + Math.random() * 3;
+    const score = space * 10 - distToTarget + selfPenalty + spacePenalty + Math.random() * 3;
 
     if (score > bestScore) {
       bestScore = score;
@@ -218,18 +241,30 @@ function calculateBotDirection(p) {
   }
 
   if (bestDir) {
+    if (p.buffs.reverse > 0) {
+      bestDir = { x: -bestDir.x, y: -bestDir.y };
+    }
     p.nextDirection = { ...bestDir };
     return;
   }
 
-  // Fallback: pick direction with most space
+  // Fallback: any safe direction including reversal (can pass through own body)
   for (const d of directions) {
-    if (d.x === -dir.x && d.y === -dir.y) continue;
     const nx = wrapMode ? ((head.x + d.x) + GRID) % GRID : head.x + d.x;
     const ny = wrapMode ? ((head.y + d.y) + GRID) % GRID : head.y + d.y;
     if (!wrapMode && (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID)) continue;
+    if (obstacles.has(`${nx},${ny}`)) continue;
     p.nextDirection = { ...d };
+    if (p.buffs.reverse > 0) {
+      p.nextDirection = { x: -p.nextDirection.x, y: -p.nextDirection.y };
+    }
     return;
+  }
+  // No safe direction at all — force reverse as absolute last resort
+  console.log(`[BOT] ${p.name} NO SAFE DIR at (${head.x},${head.y}) dir=(${dir.x},${dir.y}) len=${p.snake.length} obs=${obstacles.size}`);
+  p.nextDirection = { x: -dir.x, y: -dir.y };
+  if (p.buffs.reverse > 0) {
+    p.nextDirection = { x: -p.nextDirection.x, y: -p.nextDirection.y };
   }
 }
 
@@ -253,17 +288,20 @@ function moveSnake(p) {
         p.direction = { ...p.nextDirection };
         return;
       }
+      console.log(`[DEATH] ${p.name}(${p.isBot ? 'bot' : 'human'}) hit wall at (${head.x},${head.y}) score=${p.score} len=${p.snake.length}`);
+      convertBodyToFood(p);
       p.alive = false;
       return;
     }
   }
 
-  // Self-collision: for bots, skip tail if no food (tail moves away)
-  // For humans, check full body (original behavior)
-  const willEat = foods.some(f => f.x === head.x && f.y === head.y);
-  const checkBody = (p.isBot && !willEat) ? p.snake.slice(0, -1) : p.snake;
-  if (checkBody.some(s => s.x === head.x && s.y === head.y)) {
+  // Check collision with other players (can pass through own body)
+  const others = players.filter(o => o !== p && o.alive);
+  const collision = others.find(o => o.snake.some(s => s.x === head.x && s.y === head.y));
+  if (collision) {
     if (p.buffs.invincible > 0) return;
+    console.log(`[DEATH] ${p.name}(${p.isBot ? 'bot' : 'human'}) hit ${collision.name}(${collision.isBot ? 'bot' : 'human'}) at (${head.x},${head.y}) score=${p.score} len=${p.snake.length}`);
+    convertBodyToFood(p);
     p.alive = false;
     return;
   }
@@ -398,39 +436,27 @@ function tick() {
     if (!moved) return;
   });
 
-  const aliveCount = players.filter(p => p.alive).length;
-  const someoneDied = aliveCount < players.length;
-  if (someoneDied && !immortalMode) {
-    if (!tick._deathTimer) {
-      tick._deathTimer = setTimeout(() => {
-        tick._deathTimer = null;
-        endGame();
-      }, 600);
+  // Respawn dead players after 3 seconds (always active)
+  players.forEach(p => {
+    if (!p.alive && !p._respawnTimer) {
+      p._respawnTimer = setTimeout(() => {
+        p._respawnTimer = null;
+        if (gameState === 'playing') {
+          const idx = players.indexOf(p);
+          p.alive = true;
+          p.snake = [
+            { x: startX[idx], y: startY[idx] },
+            { x: startX[idx] - startDirs[idx].x, y: startY[idx] - startDirs[idx].y },
+            { x: startX[idx] - startDirs[idx].x * 2, y: startY[idx] - startDirs[idx].y * 2 },
+          ];
+          p.direction = { ...startDirs[idx] };
+          p.nextDirection = { ...startDirs[idx] };
+          p.buffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
+          broadcast({ type: 'respawn', id: p.id, snake: p.snake, direction: p.direction });
+        }
+      }, 3000);
     }
-  }
-  // 永生模式：死亡3秒后复活
-  if (immortalMode) {
-    players.forEach(p => {
-      if (!p.alive && !p._respawnTimer) {
-        p._respawnTimer = setTimeout(() => {
-          p._respawnTimer = null;
-          if (gameState === 'playing') {
-            const idx = players.indexOf(p);
-            p.alive = true;
-            p.snake = [
-              { x: startX[idx], y: startY[idx] },
-              { x: startX[idx] - startDirs[idx].x, y: startY[idx] - startDirs[idx].y },
-              { x: startX[idx] - startDirs[idx].x * 2, y: startY[idx] - startDirs[idx].y * 2 },
-            ];
-            p.direction = { ...startDirs[idx] };
-            p.nextDirection = { ...startDirs[idx] };
-            p.buffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
-            broadcast({ type: 'respawn', id: p.id, snake: p.snake, direction: p.direction });
-          }
-        }, 3000);
-      }
-    });
-  }
+  });
 }
 
 function timerTick() {

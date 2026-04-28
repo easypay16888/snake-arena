@@ -2127,6 +2127,7 @@
     let fmCamX = 0, fmCamY = 0;
     let fmBgCanvas = null; // cached background texture
     let fmBots = [];
+    let fmRespawnTimers = {};
 
     const FM_SPEED = 180;        // base speed pixels/sec
     const FM_TURN_RATE = 4.5;    // radians/sec
@@ -2191,6 +2192,49 @@
         speed: FM_SPEED,
         turnRate: FM_TURN_RATE * 0.75,
       };
+    }
+
+    function fmDropTrailAsFood(trail, count) {
+      const maxDrop = Math.min(count || 8, 8);
+      const step = Math.max(1, Math.floor(trail.length / maxDrop));
+      for (let i = 0; i < trail.length; i += step) {
+        const seg = trail[i];
+        const r = FM_FOOD_RADIUS_MIN + Math.random() * 4;
+        fmFoods.push({ x: seg.x, y: seg.y, r, id: Math.random().toString(36).slice(2, 6), dropped: true });
+      }
+    }
+
+    function fmScheduleRespawn(target, isPlayer) {
+      const key = isPlayer ? 'player' : target.id;
+      if (fmRespawnTimers[key]) return;
+      fmRespawnTimers[key] = setTimeout(() => {
+        delete fmRespawnTimers[key];
+        if (!fmStarted) return;
+        if (isPlayer) {
+          fmHeadX = FM_BOUNDARY_MARGIN + Math.random() * (FM_WORLD_W - FM_BOUNDARY_MARGIN * 2);
+          fmHeadY = FM_BOUNDARY_MARGIN + Math.random() * (FM_WORLD_H - FM_BOUNDARY_MARGIN * 2);
+          fmAngle = Math.random() * Math.PI * 2;
+          fmTrail = [];
+          fmLength = FM_INITIAL_LENGTH;
+          fmScore = 0;
+          fmBuffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
+          fmAlive = true;
+          fmLastTime = performance.now();
+        } else {
+          const margin = 80;
+          target.headX = margin + Math.random() * (FM_WORLD_W - margin * 2);
+          target.headY = margin + Math.random() * (FM_WORLD_H - margin * 2);
+          target.angle = Math.random() * Math.PI * 2;
+          target.trail = [];
+          for (let i = 0; i < FM_INITIAL_LENGTH * FM_SEGMENT_GAP; i++) {
+            target.trail.push({ x: target.headX - Math.cos(target.angle) * i * 0.5, y: target.headY - Math.sin(target.angle) * i * 0.5 });
+          }
+          target.length = FM_INITIAL_LENGTH;
+          target.score = 0;
+          target.buffs = { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 };
+          target.alive = true;
+        }
+      }, 3000);
     }
 
     function fmBotTargetAngle(bot) {
@@ -2292,6 +2336,11 @@
           ty += (dy / d) * 5 * f * f;
         }
       }
+
+      // 5. Direction persistence / momentum (prevent spinning)
+      const momentumWeight = 5;
+      tx += Math.cos(bot.angle) * momentumWeight;
+      ty += Math.sin(bot.angle) * momentumWeight;
 
       return Math.atan2(ty, tx);
     }
@@ -2510,81 +2559,85 @@
     }
 
     function fmFrame(timestamp) {
-      if (!fmAlive) {
+      if (!fmAlive && !Object.keys(fmRespawnTimers).length) {
         fmAnimId = null;
         return;
       }
       if (!fmLastTime) fmLastTime = timestamp;
-      const dt = Math.min((timestamp - fmLastTime) / 1000, 0.05); // cap at 50ms
+      const dt = Math.min((timestamp - fmLastTime) / 1000, 0.05);
       fmLastTime = timestamp;
 
-      // Input
-      fmTargetAngle = fmGetTargetAngle();
-      const turnAmount = FM_TURN_RATE * dt;
-      fmAngle = angleLerp(fmAngle, fmTargetAngle, Math.min(turnAmount, 1));
+      // --- Player update (only when alive) ---
+      if (fmAlive) {
+        fmTargetAngle = fmGetTargetAngle();
+        const turnAmount = FM_TURN_RATE * dt;
+        fmAngle = angleLerp(fmAngle, fmTargetAngle, Math.min(turnAmount, 1));
 
-      // Movement
-      const speed = fmGetSpeed();
-      fmHeadX += Math.cos(fmAngle) * speed * dt;
-      fmHeadY += Math.sin(fmAngle) * speed * dt;
+        const speed = fmGetSpeed();
+        fmHeadX += Math.cos(fmAngle) * speed * dt;
+        fmHeadY += Math.sin(fmAngle) * speed * dt;
 
-      // Boundary
-      const m = FM_BOUNDARY_MARGIN;
-      if (fmWrapMode) {
-        if (fmHeadX < 0) fmHeadX += FM_WORLD_W;
-        if (fmHeadX >= FM_WORLD_W) fmHeadX -= FM_WORLD_W;
-        if (fmHeadY < 0) fmHeadY += FM_WORLD_H;
-        if (fmHeadY >= FM_WORLD_H) fmHeadY -= FM_WORLD_H;
-      } else {
-        if (fmHeadX < m || fmHeadX > FM_WORLD_W - m || fmHeadY < m || fmHeadY > FM_WORLD_H - m) {
-          if (fmBuffs.invincible > 0) {
-            fmHeadX = Math.max(m, Math.min(FM_WORLD_W - m, fmHeadX));
-            fmHeadY = Math.max(m, Math.min(FM_WORLD_H - m, fmHeadY));
-            fmAngle += Math.PI; // bounce
-          } else {
-            fmAlive = false;
-            playDeathSFX();
-            endSoloGame('collision');
-            fmAnimId = null;
-            return;
+        // Boundary
+        const m = FM_BOUNDARY_MARGIN;
+        if (fmWrapMode) {
+          if (fmHeadX < 0) fmHeadX += FM_WORLD_W;
+          if (fmHeadX >= FM_WORLD_W) fmHeadX -= FM_WORLD_W;
+          if (fmHeadY < 0) fmHeadY += FM_WORLD_H;
+          if (fmHeadY >= FM_WORLD_H) fmHeadY -= FM_WORLD_H;
+        } else {
+          if (fmHeadX < m || fmHeadX > FM_WORLD_W - m || fmHeadY < m || fmHeadY > FM_WORLD_H - m) {
+            if (fmBuffs.invincible > 0) {
+              fmHeadX = Math.max(m, Math.min(FM_WORLD_W - m, fmHeadX));
+              fmHeadY = Math.max(m, Math.min(FM_WORLD_H - m, fmHeadY));
+              fmAngle += Math.PI;
+            } else {
+              fmAlive = false;
+              playDeathSFX();
+              fmDropTrailAsFood(fmTrail, Math.floor(fmLength));
+              fmTrail = [];
+              fmScheduleRespawn(null, true);
+            }
+          }
+        }
+
+        // Trail
+        if (fmAlive) {
+          fmTrail.unshift({ x: fmHeadX, y: fmHeadY });
+          const maxTrailLen = fmLength * FM_SEGMENT_GAP;
+          while (fmTrail.length > maxTrailLen) fmTrail.pop();
+        }
+
+        // Buff timers
+        for (const k in fmBuffs) { if (fmBuffs[k] > 0) fmBuffs[k] -= dt; }
+
+        // Magnet
+        fmMagnetPull();
+
+        // Food collision
+        for (let i = fmFoods.length - 1; i >= 0; i--) {
+          const foodR = fmFoods[i].r || FM_FOOD_RADIUS_MIN;
+          if (fmDist(fmHeadX, fmHeadY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + foodR) {
+            const sizeBonus = Math.round((foodR - FM_FOOD_RADIUS_MIN) / (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN) * 15);
+            const gain = fmBuffs.double > 0 ? (10 + sizeBonus) * 2 : 10 + sizeBonus;
+            fmScore += gain;
+            fmLength += 1;
+            const dropped = fmFoods[i].dropped;
+            fmFoods.splice(i, 1);
+            if (!dropped) fmSpawnFood();
+            playEatSFX();
+          }
+        }
+
+        // Powerup collision
+        for (let i = fmPowerups.length - 1; i >= 0; i--) {
+          if (fmDist(fmHeadX, fmHeadY, fmPowerups[i].x, fmPowerups[i].y) < FM_HEAD_RADIUS + FM_POWERUP_RADIUS) {
+            fmApplyBuff(fmPowerups[i].type);
+            fmPowerups.splice(i, 1);
           }
         }
       }
 
-      // Trail
-      fmTrail.unshift({ x: fmHeadX, y: fmHeadY });
-      const maxTrailLen = fmLength * FM_SEGMENT_GAP;
-      while (fmTrail.length > maxTrailLen) fmTrail.pop();
-
-      // Buff timers
-      for (const k in fmBuffs) { if (fmBuffs[k] > 0) fmBuffs[k] -= dt; }
-
-      // Magnet
-      fmMagnetPull();
-
-      // Food collision
-      for (let i = fmFoods.length - 1; i >= 0; i--) {
-        const foodR = fmFoods[i].r || FM_FOOD_RADIUS_MIN;
-        if (fmDist(fmHeadX, fmHeadY, fmFoods[i].x, fmFoods[i].y) < FM_HEAD_RADIUS + foodR) {
-          const sizeBonus = Math.round((foodR - FM_FOOD_RADIUS_MIN) / (FM_FOOD_RADIUS_MAX - FM_FOOD_RADIUS_MIN) * 15);
-          const gain = fmBuffs.double > 0 ? (10 + sizeBonus) * 2 : 10 + sizeBonus;
-          fmScore += gain;
-          fmLength += 1;
-          fmFoods.splice(i, 1);
-          fmSpawnFood();
-          playEatSFX();
-        }
-      }
-
-      // Powerup collision
-      for (let i = fmPowerups.length - 1; i >= 0; i--) {
-        if (fmDist(fmHeadX, fmHeadY, fmPowerups[i].x, fmPowerups[i].y) < FM_HEAD_RADIUS + FM_POWERUP_RADIUS) {
-          fmApplyBuff(fmPowerups[i].type);
-          fmPowerups.splice(i, 1);
-        }
-      }
-
-      // Powerup TTL and spawn
+      // Powerup TTL and spawn (always)
       for (let i = fmPowerups.length - 1; i >= 0; i--) {
         fmPowerups[i].ttl -= dt;
         if (fmPowerups[i].ttl <= 0) fmPowerups.splice(i, 1);
@@ -2595,19 +2648,14 @@
         fmSpawnPowerup();
       }
 
-      // Free move mode: snake can pass through its own body (like Slither.io)
-      // Self-collision is disabled — only wall and other snakes cause death
-
       // --- Bot update ---
       for (const bot of fmBots) {
         if (!bot.alive) continue;
 
-        // AI: turn toward target
         const desiredAngle = fmBotTargetAngle(bot);
         const turnAmount = bot.turnRate * dt;
         bot.angle = angleLerp(bot.angle, desiredAngle, Math.min(turnAmount, 1));
 
-        // Movement
         const bSpeed = fmBotGetSpeed(bot);
         bot.headX += Math.cos(bot.angle) * bSpeed * dt;
         bot.headY += Math.sin(bot.angle) * bSpeed * dt;
@@ -2628,6 +2676,9 @@
             } else {
               bot.alive = false;
               createParticles(bot.headX, bot.headY, bot.color, 20);
+              fmDropTrailAsFood(bot.trail, Math.floor(bot.length));
+              bot.trail = [];
+              fmScheduleRespawn(bot, false);
               continue;
             }
           }
@@ -2649,8 +2700,9 @@
             const gain = bot.buffs.double > 0 ? (10 + sizeBonus) * 2 : 10 + sizeBonus;
             bot.score += gain;
             bot.length += 1;
+            const d = fmFoods[i].dropped;
             fmFoods.splice(i, 1);
-            fmSpawnFood();
+            if (!d) fmSpawnFood();
           }
         }
 
@@ -2674,44 +2726,74 @@
               if (fmBuffs.invincible <= 0) {
                 fmAlive = false;
                 playDeathSFX();
-                endSoloGame('collision');
-                fmAnimId = null;
-                return;
+                fmDropTrailAsFood(fmTrail, Math.floor(fmLength));
+                fmTrail = [];
+                fmScheduleRespawn(null, true);
               }
             }
           }
 
           // Bot head hits player body
-          for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP) {
-            if (fmDist(bot.headX, bot.headY, fmTrail[i].x, fmTrail[i].y) < FM_HEAD_RADIUS * 1.5) {
-              if (bot.buffs.invincible <= 0) {
-                bot.alive = false;
-                createParticles(bot.headX, bot.headY, bot.color, 20);
+          if (fmAlive) {
+            for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP) {
+              if (fmDist(bot.headX, bot.headY, fmTrail[i].x, fmTrail[i].y) < FM_HEAD_RADIUS * 1.5) {
+                if (bot.buffs.invincible <= 0) {
+                  bot.alive = false;
+                  createParticles(bot.headX, bot.headY, bot.color, 20);
+                  fmDropTrailAsFood(bot.trail, Math.floor(bot.length));
+                  bot.trail = [];
+                  fmScheduleRespawn(bot, false);
+                }
+                break;
               }
-              break;
+            }
+          }
+
+          // Bot head hits other bot body
+          if (bot.alive) {
+            for (const otherBot of fmBots) {
+              if (otherBot.id === bot.id || !otherBot.alive) continue;
+              for (let i = FM_SEGMENT_GAP * 2; i < otherBot.trail.length; i += FM_SEGMENT_GAP) {
+                if (fmDist(bot.headX, bot.headY, otherBot.trail[i].x, otherBot.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
+                  if (bot.buffs.invincible <= 0) {
+                    bot.alive = false;
+                    createParticles(bot.headX, bot.headY, bot.color, 20);
+                    fmDropTrailAsFood(bot.trail, Math.floor(bot.length));
+                    bot.trail = [];
+                    fmScheduleRespawn(bot, false);
+                  }
+                  break;
+                }
+              }
+              if (!bot.alive) break;
             }
           }
 
           // Head-to-head collision
-          if (fmDist(fmHeadX, fmHeadY, bot.headX, bot.headY) < FM_HEAD_RADIUS * 2) {
+          if (fmAlive && fmDist(fmHeadX, fmHeadY, bot.headX, bot.headY) < FM_HEAD_RADIUS * 2) {
             if (fmBuffs.invincible <= 0 && bot.buffs.invincible <= 0) {
-              // Both die on head-to-head
               fmAlive = false;
               playDeathSFX();
+              fmDropTrailAsFood(fmTrail, Math.floor(fmLength));
+              fmTrail = [];
+              fmScheduleRespawn(null, true);
               bot.alive = false;
               createParticles(bot.headX, bot.headY, bot.color, 20);
-              endSoloGame('collision');
-              fmAnimId = null;
-              return;
+              fmDropTrailAsFood(bot.trail, Math.floor(bot.length));
+              bot.trail = [];
+              fmScheduleRespawn(bot, false);
             } else if (fmBuffs.invincible <= 0) {
               fmAlive = false;
               playDeathSFX();
-              endSoloGame('collision');
-              fmAnimId = null;
-              return;
+              fmDropTrailAsFood(fmTrail, Math.floor(fmLength));
+              fmTrail = [];
+              fmScheduleRespawn(null, true);
             } else if (bot.buffs.invincible <= 0) {
               bot.alive = false;
               createParticles(bot.headX, bot.headY, bot.color, 20);
+              fmDropTrailAsFood(bot.trail, Math.floor(bot.length));
+              bot.trail = [];
+              fmScheduleRespawn(bot, false);
             }
           }
         }
@@ -2727,15 +2809,15 @@
 
           // Head-to-head
           if (fmDist(botA.headX, botA.headY, botB.headX, botB.headY) < FM_HEAD_RADIUS * 2) {
-            if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); }
-            if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); }
+            if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); fmDropTrailAsFood(botA.trail, Math.floor(botA.length)); botA.trail = []; fmScheduleRespawn(botA, false); }
+            if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); fmDropTrailAsFood(botB.trail, Math.floor(botB.length)); botB.trail = []; fmScheduleRespawn(botB, false); }
             continue;
           }
 
           // A head hits B body
           for (let i = FM_SEGMENT_GAP; i < botB.trail.length; i += FM_SEGMENT_GAP) {
             if (fmDist(botA.headX, botA.headY, botB.trail[i].x, botB.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
-              if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); }
+              if (botA.buffs.invincible <= 0) { botA.alive = false; createParticles(botA.headX, botA.headY, botA.color, 20); fmDropTrailAsFood(botA.trail, Math.floor(botA.length)); botA.trail = []; fmScheduleRespawn(botA, false); }
               break;
             }
           }
@@ -2743,14 +2825,14 @@
           // B head hits A body
           for (let i = FM_SEGMENT_GAP; i < botA.trail.length; i += FM_SEGMENT_GAP) {
             if (fmDist(botB.headX, botB.headY, botA.trail[i].x, botA.trail[i].y) < FM_HEAD_RADIUS * 1.5) {
-              if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); }
+              if (botB.buffs.invincible <= 0) { botB.alive = false; createParticles(botB.headX, botB.headY, botB.color, 20); fmDropTrailAsFood(botB.trail, Math.floor(botB.length)); botB.trail = []; fmScheduleRespawn(botB, false); }
               break;
             }
           }
         }
       }
 
-      // Camera: keep head centered
+      // Camera
       fmCamX = fmHeadX - canvas.width / 2;
       fmCamY = fmHeadY - canvas.height / 2;
       if (!fmWrapMode) {
@@ -2774,7 +2856,6 @@
       gameTimer = fmTimerVal;
       updateHud();
 
-      // Draw
       drawFreeMoveGame();
 
       fmAnimId = requestAnimationFrame(fmFrame);
@@ -2792,6 +2873,8 @@
     function startFreeMoveGame() {
       showScreen('gameScreen');
       setMusicState('playing');
+      initAudio();
+      if (!musicScheduler) startMusic();
       fmStarted = true;
       fmLastTime = 0;
       fmAnimId = requestAnimationFrame(fmFrame);
@@ -3273,7 +3356,7 @@
 
     function initAudio() {
       if (audioCtx) {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
         return;
       }
       try {
@@ -3281,11 +3364,17 @@
         masterGain = audioCtx.createGain();
         masterGain.gain.value = 0.35;
         masterGain.connect(audioCtx.destination);
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
       } catch(e) {
         audioCtx = null;
       }
     }
+
+    document.addEventListener('click', () => {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+    }, { once: false });
 
     function toggleMusic() {
       musicMuted = !musicMuted;
@@ -3576,10 +3665,8 @@
     function startMusic() {
       initAudio();
       if (!audioCtx) return;
-      // Resume synchronously - this works because initAudio was called
-      // from a user gesture (click), so the browser allows it
       if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+        audioCtx.resume().catch(() => {});
       }
       nextNoteTime = audioCtx.currentTime;
       currentBeat = 0;
