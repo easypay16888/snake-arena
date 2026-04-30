@@ -2240,7 +2240,7 @@
     function fmBotTargetAngle(bot) {
       let tx = 0, ty = 0;
 
-      // 1. Seek nearest food / powerup (weight reduced so obstacles can override)
+      // 1. Seek nearest food / powerup
       let nearestDist = Infinity;
       let target = null;
       for (const f of fmFoods) {
@@ -2249,15 +2249,15 @@
       }
       for (const pu of fmPowerups) {
         const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
-        if (d < 300 && d < nearestDist) { nearestDist = d; target = pu; }
+        if (d < 400 && d < nearestDist) { nearestDist = d; target = pu; }
       }
       if (target) {
-        const weight = Math.min(1.2, 40 / Math.max(nearestDist, 10));
+        const weight = Math.min(8, 300 / Math.max(nearestDist, 30));
         tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * weight;
         ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * weight;
       } else {
-        tx += (FM_WORLD_W / 2 - bot.headX) / FM_WORLD_W;
-        ty += (FM_WORLD_H / 2 - bot.headY) / FM_WORLD_H;
+        tx += (FM_WORLD_W / 2 - bot.headX) / FM_WORLD_W * 0.3;
+        ty += (FM_WORLD_H / 2 - bot.headY) / FM_WORLD_H * 0.3;
       }
 
       // 2. Avoid walls / boundaries (stronger push)
@@ -2283,11 +2283,11 @@
         }
       }
 
-      // 3. Avoid snake bodies — scan 3 feelers (left, center, right)
-      const lookAhead = 140;
-      const feelerSpread = 0.6; // radians (~34° each side)
-      const avoidRadius = FM_HEAD_RADIUS * 3.5;
-      const avoidWeight = 10;
+      // 3. Avoid snake bodies — scan 5 feelers (left, center, right)
+      const lookAhead = 220;
+      const feelerSpread = 0.45; // radians (~26° each side)
+      const avoidRadius = FM_HEAD_RADIUS * 5;
+      const avoidWeight = 12;
 
       const allTrails = [];
       if (fmTrail.length > FM_SEGMENT_GAP * 3) allTrails.push(fmTrail);
@@ -2297,7 +2297,7 @@
         }
       }
 
-      for (let fi = -1; fi <= 1; fi++) {
+      for (let fi = -2; fi <= 2; fi++) {
         const fa = bot.angle + fi * feelerSpread;
         const fx = bot.headX + Math.cos(fa) * lookAhead;
         const fy = bot.headY + Math.sin(fa) * lookAhead;
@@ -2328,12 +2328,12 @@
       }
       for (const h of heads) {
         const d = fmDist(bot.headX, bot.headY, h.x, h.y);
-        if (d < FM_HEAD_RADIUS * 6 && d > 0) {
-          const f = 1 - d / (FM_HEAD_RADIUS * 6);
+        if (d < FM_HEAD_RADIUS * 14 && d > 0) {
+          const f = 1 - d / (FM_HEAD_RADIUS * 14);
           const dx = bot.headX - h.x;
           const dy = bot.headY - h.y;
-          tx += (dx / d) * 5 * f * f;
-          ty += (dy / d) * 5 * f * f;
+          tx += (dx / d) * 8 * f * f;
+          ty += (dy / d) * 8 * f * f;
         }
       }
 
@@ -3381,6 +3381,15 @@
       const btn = document.getElementById('musicToggle');
       btn.textContent = musicMuted ? '🔇' : '🔊';
       btn.classList.toggle('muted', musicMuted);
+      if (!musicMuted) {
+        initAudio();
+        if (!musicScheduler) startMusic();
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => {});
+        }
+        if (audioCtx) nextNoteTime = audioCtx.currentTime;
+        currentBeat = 0;
+      }
       if (masterGain) masterGain.gain.value = musicMuted ? 0 : 0.35;
     }
 
