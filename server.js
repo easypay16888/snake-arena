@@ -232,7 +232,7 @@ function calculateBotDirection(p) {
     const selfPenalty = ownBody.has(key) ? -300 : 0;
     // Heavy penalty for tight spaces, but still pickable if all else fails
     const spacePenalty = space < p.snake.length ? -500 : 0;
-    const score = space * 10 - distToTarget + selfPenalty + spacePenalty + Math.random() * 3;
+    const score = space * 10 - distToTarget * 30 + selfPenalty + spacePenalty + Math.random() * 3;
 
     if (score > bestScore) {
       bestScore = score;
