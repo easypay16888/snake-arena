@@ -2252,7 +2252,8 @@
         if (d < 400 && d < nearestDist) { nearestDist = d; target = pu; }
       }
       if (target) {
-        const weight = Math.min(8, 300 / Math.max(nearestDist, 30));
+        // Stronger attraction that grows as bot gets closer to food
+        const weight = Math.min(30, 600 / Math.max(nearestDist, 15));
         tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * weight;
         ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * weight;
       } else {
@@ -2287,7 +2288,7 @@
       const lookAhead = 220;
       const feelerSpread = 0.45; // radians (~26° each side)
       const avoidRadius = FM_HEAD_RADIUS * 5;
-      const avoidWeight = 12;
+      const avoidWeight = 6;
 
       const allTrails = [];
       if (fmTrail.length > FM_SEGMENT_GAP * 3) allTrails.push(fmTrail);
@@ -2337,8 +2338,8 @@
         }
       }
 
-      // 5. Direction persistence / momentum (prevent spinning)
-      const momentumWeight = 5;
+      // 5. Direction persistence / momentum (prevent spinning, weaker when food nearby)
+      const momentumWeight = target ? 3 : 6;
       tx += Math.cos(bot.angle) * momentumWeight;
       ty += Math.sin(bot.angle) * momentumWeight;
 
