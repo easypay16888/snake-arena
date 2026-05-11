@@ -2190,7 +2190,7 @@
         alive: true,
         buffs: { double: 0, speedUp: 0, speedDown: 0, magnet: 0, reverse: 0, invincible: 0 },
         speed: FM_SPEED,
-        turnRate: FM_TURN_RATE * 0.75,
+        turnRate: FM_TURN_RATE * 1.5,
       };
     }
 
@@ -2238,9 +2238,7 @@
     }
 
     function fmBotTargetAngle(bot) {
-      let tx = 0, ty = 0;
-
-      // 1. Seek nearest food / powerup
+      // Find nearest food / powerup
       let nearestDist = Infinity;
       let target = null;
       for (const f of fmFoods) {
@@ -2251,99 +2249,36 @@
         const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
         if (d < 400 && d < nearestDist) { nearestDist = d; target = pu; }
       }
-      if (target) {
-        // Stronger attraction that grows as bot gets closer to food
-        const weight = Math.min(30, 600 / Math.max(nearestDist, 15));
-        tx += (target.x - bot.headX) / Math.max(nearestDist, 1) * weight;
-        ty += (target.y - bot.headY) / Math.max(nearestDist, 1) * weight;
-      } else {
-        tx += (FM_WORLD_W / 2 - bot.headX) / FM_WORLD_W * 0.3;
-        ty += (FM_WORLD_H / 2 - bot.headY) / FM_WORLD_H * 0.3;
-      }
 
-      // 2. Avoid walls / boundaries (stronger push)
-      const warnDist = 180;
-      const m = FM_BOUNDARY_MARGIN;
+      // Default: head directly toward target (or world center)
+      let dx = target ? (target.x - bot.headX) : (FM_WORLD_W / 2 - bot.headX);
+      let dy = target ? (target.y - bot.headY) : (FM_WORLD_H / 2 - bot.headY);
+
+      // Wall avoidance — only when critically close (hard boundary)
+      const m = FM_BOUNDARY_MARGIN + 30;
       if (!fmWrapMode) {
-        const wallWeight = 8;
-        if (bot.headX < m + warnDist) {
-          const f = 1 - (bot.headX - m) / warnDist;
-          tx += wallWeight * f * f;
-        }
-        if (bot.headX > FM_WORLD_W - m - warnDist) {
-          const f = 1 - (FM_WORLD_W - m - bot.headX) / warnDist;
-          tx -= wallWeight * f * f;
-        }
-        if (bot.headY < m + warnDist) {
-          const f = 1 - (bot.headY - m) / warnDist;
-          ty += wallWeight * f * f;
-        }
-        if (bot.headY > FM_WORLD_H - m - warnDist) {
-          const f = 1 - (FM_WORLD_H - m - bot.headY) / warnDist;
-          ty -= wallWeight * f * f;
-        }
+        const wallForce = 8;
+        if (bot.headX < m) dx += wallForce;
+        if (bot.headX > FM_WORLD_W - m) dx -= wallForce;
+        if (bot.headY < m) dy += wallForce;
+        if (bot.headY > FM_WORLD_H - m) dy -= wallForce;
       }
 
-      // 3. Avoid snake bodies — scan 5 feelers (left, center, right)
-      const lookAhead = 220;
-      const feelerSpread = 0.45; // radians (~26° each side)
-      const avoidRadius = FM_HEAD_RADIUS * 5;
-      const avoidWeight = 6;
-
-      const allTrails = [];
-      if (fmTrail.length > FM_SEGMENT_GAP * 3) allTrails.push(fmTrail);
-      for (const other of fmBots) {
-        if (other.id !== bot.id && other.alive && other.trail.length > FM_SEGMENT_GAP * 3) {
-          allTrails.push(other.trail);
-        }
-      }
-
-      for (let fi = -2; fi <= 2; fi++) {
-        const fa = bot.angle + fi * feelerSpread;
-        const fx = bot.headX + Math.cos(fa) * lookAhead;
-        const fy = bot.headY + Math.sin(fa) * lookAhead;
-        let hit = false;
-
-        for (const trail of allTrails) {
-          for (let i = FM_SEGMENT_GAP * 2; i < trail.length; i += FM_SEGMENT_GAP) {
-            const seg = trail[i];
-            if (fmDist(fx, fy, seg.x, seg.y) < avoidRadius) {
-              hit = true;
-              break;
-            }
-          }
-          if (hit) break;
-        }
-
-        if (hit) {
-          // Steer away from the feeler direction
-          tx -= Math.cos(fa) * avoidWeight;
-          ty -= Math.sin(fa) * avoidWeight;
-        }
-      }
-
-      // 4. Avoid head-on collisions with other heads
+      // Head-on collision avoidance with player and other bots
       const heads = [{ x: fmHeadX, y: fmHeadY }];
       for (const other of fmBots) {
         if (other.id !== bot.id && other.alive) heads.push({ x: other.headX, y: other.headY });
       }
       for (const h of heads) {
         const d = fmDist(bot.headX, bot.headY, h.x, h.y);
-        if (d < FM_HEAD_RADIUS * 14 && d > 0) {
-          const f = 1 - d / (FM_HEAD_RADIUS * 14);
-          const dx = bot.headX - h.x;
-          const dy = bot.headY - h.y;
-          tx += (dx / d) * 8 * f * f;
-          ty += (dy / d) * 8 * f * f;
+        if (d < FM_HEAD_RADIUS * 12 && d > 0) {
+          const f = 1 - d / (FM_HEAD_RADIUS * 12);
+          dx += (bot.headX - h.x) / d * 6 * f * f;
+          dy += (bot.headY - h.y) / d * 6 * f * f;
         }
       }
 
-      // 5. Direction persistence / momentum (prevent spinning, weaker when food nearby)
-      const momentumWeight = target ? 3 : 6;
-      tx += Math.cos(bot.angle) * momentumWeight;
-      ty += Math.sin(bot.angle) * momentumWeight;
-
-      return Math.atan2(ty, tx);
+      return Math.atan2(dy, dx);
     }
 
     function fmBotGetSpeed(bot) {
