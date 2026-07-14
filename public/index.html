@@ -469,6 +469,11 @@
       <div class="switch" id="wrapSwitch" onclick="toggleWrap()"></div>
       <span id="wrapLabel" style="font-size:0.78rem;color:#555;">撞墙即死</span>
     </div>
+    <div class="mode-toggle" id="gameModeToggle">
+      <span class="label">游戏模式</span>
+      <div class="switch" id="gameModeSwitch" onclick="toggleGameMode()"></div>
+      <span id="gameModeLabel" style="font-size:0.78rem;color:#555;">经典网格</span>
+    </div>
     <div class="mode-toggle" id="immortalToggle">
       <span class="label">永生模式</span>
       <div class="switch" id="immortalSwitch" onclick="toggleImmortal()"></div>
@@ -658,6 +663,10 @@
     let frameCount = 0;
     let isSoloMode = false;
     let soloWrapMode = false;
+    let mpGameMode = 'grid';
+    let mpFreeState = null;
+    let mpCamX = 0, mpCamY = 0;
+    let mpBgCanvas = null;
 
     // --- Auto-detect server & restore name ---
     (function() {
@@ -767,6 +776,9 @@
           gameWrapMode = msg.wrapMode || false;
           gameImmortalMode = msg.immortalMode || false;
           gameMatchTime = msg.matchTime || 120;
+          mpGameMode = msg.gameMode || 'grid';
+          mpFreeState = null;
+          mpBgCanvas = null;
           renderLobby();
           break;
 
@@ -795,10 +807,20 @@
         case 'result':
           showScreen('resultScreen');
           renderResult(msg.rankings);
+          mpFreeState = null;
+          mpBgCanvas = null;
           break;
 
         case 'full':
           document.getElementById('connectStatus').textContent = '房间已满';
+          break;
+
+        case 'freeState':
+          mpFreeState = msg;
+          document.getElementById('countdownOverlay').classList.remove('show');
+          if (!document.getElementById('gameScreen').classList.contains('active')) {
+            showScreen('gameScreen');
+          }
           break;
 
         case 'rematch_wait':
@@ -813,10 +835,22 @@
           showScreen('lobbyScreen');
           break;
 
+        case 'died':
+          // Server notifies at death so countdown runs during the wait, not after respawn
+          if (msg.id === myId && msg.respawnIn > 0) {
+            showRespawnCountdown(msg.respawnIn);
+          }
+          break;
+
         case 'respawn':
           if (msg.id === myId) {
-            // My snake is respawning - show countdown overlay
-            showRespawnCountdown(3);
+            // Already alive again — clear overlay if still visible
+            const overlay = document.getElementById('respawnOverlay');
+            if (overlay) overlay.classList.remove('show');
+            if (respawnTimers.visual) {
+              clearInterval(respawnTimers.visual);
+              respawnTimers.visual = null;
+            }
           }
           break;
       }
@@ -883,6 +917,23 @@
       }
       it.style.display = 'flex';
 
+      // Game mode toggle
+      const gms = document.getElementById('gameModeSwitch');
+      const gml = document.getElementById('gameModeLabel');
+      const gmt = document.getElementById('gameModeToggle');
+      if (gms && gml) {
+        if (mpGameMode === 'free') {
+          gms.classList.add('on');
+          gml.textContent = '自由大乱斗';
+          gml.style.color = '#00ffcc';
+        } else {
+          gms.classList.remove('on');
+          gml.textContent = '经典网格';
+          gml.style.color = '#555';
+        }
+      }
+      if (gmt) gmt.style.display = isHost ? 'flex' : 'flex';
+
       // Match time selector (host only)
       const mtSelect = document.getElementById('matchTimeSelect');
       const mtToggle = document.getElementById('matchTimeToggle');
@@ -896,6 +947,11 @@
       // Bot buttons (host only)
       const botToggle = document.getElementById('botToggle');
       botToggle.style.display = isHost ? 'flex' : 'none';
+    }
+
+    function toggleGameMode() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ type: 'toggleGameMode' }));
     }
 
     function toggleWrap() {
@@ -1082,6 +1138,11 @@
     // --- Game rendering ---
     function drawGame() {
       frameCount++;
+      if (mpGameMode === 'free' && mpFreeState && document.getElementById('gameScreen').classList.contains('active')) {
+        renderMpFreeFrame();
+        requestAnimationFrame(drawGame);
+        return;
+      }
       if (soloMoveMode === 'free' && isSoloMode && fmStarted && fmAlive) {
         // Free move mode renders itself in fmFrame while alive
         requestAnimationFrame(drawGame);
@@ -1470,7 +1531,14 @@
         return;
       }
 
-      if (ws && gameSnakes.some(s => s.id === myId && s.alive)) {
+      if (ws && mpGameMode === 'free' && mpFreeState) {
+        // Multiplayer free mode: send angle based on direction
+        let angle = Math.atan2(dy, dx);
+        // Apply reverse buff if active
+        const me = mpFreeState.players.find(p => p.id === myId);
+        if (me && me.buffs && me.buffs.reverse > 0) angle += Math.PI;
+        ws.send(JSON.stringify({ type: 'freeAngle', angle }));
+    } else if (ws && gameSnakes.some(s => s.id === myId && s.alive)) {
         ws.send(JSON.stringify({ type: 'dir', dx, dy }));
       }
     });
@@ -1505,9 +1573,31 @@
 
     // Free movement touch/mouse listeners
     canvas.addEventListener('touchmove', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmTouchMove(e); } }, { passive: false });
-    canvas.addEventListener('mousedown', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseDown(e); } });
-    canvas.addEventListener('mousemove', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseMove(e); } });
-    canvas.addEventListener('mouseup', (e) => { if (soloMoveMode === 'free' && isSoloMode) { fmMouseUp(e); } });
+    canvas.addEventListener('mousedown', (e) => {
+      if (soloMoveMode === 'free' && isSoloMode) { fmMouseDown(e); return; }
+      if (mpGameMode === 'free' && mpFreeState) { mpFreeMouseActive = true; mpFreeMouseMove(e); }
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (soloMoveMode === 'free' && isSoloMode) { fmMouseMove(e); return; }
+      if (mpGameMode === 'free' && mpFreeState && mpFreeMouseActive) { mpFreeMouseMove(e); }
+    });
+    canvas.addEventListener('mouseup', (e) => {
+      if (soloMoveMode === 'free' && isSoloMode) { fmMouseUp(e); return; }
+      mpFreeMouseActive = false;
+    });
+    // Multiplayer free mode mouse tracking
+    let mpFreeMouseActive = false;
+    function mpFreeMouseMove(e) {
+      if (!mpFreeState || !ws) return;
+      const rect = canvas.getBoundingClientRect();
+      // Convert screen coords to world coords (camera centered on my snake)
+      const mySnake = mpFreeState.players.find(p => p.id === myId);
+      if (!mySnake || !mySnake.alive) return;
+      const worldX = (e.clientX - rect.left) / rect.width * 2000 + mySnake.headX - 1000;
+      const worldY = (e.clientY - rect.top) / rect.height * 2000 + mySnake.headY - 1000;
+      const angle = Math.atan2(worldY - mySnake.headY, worldX - mySnake.headX);
+      ws.send(JSON.stringify({ type: 'freeAngle', angle }));
+    }
     document.addEventListener('keyup', (e) => { fmKeysDown.delete(e.key); });
 
     // --- Result ---
@@ -2106,7 +2196,125 @@
       ws.send(JSON.stringify({ type: 'rematch' }));
     }
 
-    // ===== FREE MOVEMENT MODE ENGINE =====
+    // ===== MULTIPLAYER FREE MOVE RENDERING =====
+    // Reuses proven solo-mode rendering functions by temporarily
+    // swapping global state variables to multiplayer values.
+
+    function generateMpBackground() {
+      const bgCanvas = document.createElement('canvas');
+      bgCanvas.width = FM_WORLD_W;
+      bgCanvas.height = FM_WORLD_H;
+      const bg = bgCanvas.getContext('2d');
+
+      const zoneColors = [
+        ['#0d0d28', '#0a0a22', '#0f0d2d', '#0b0b25'],
+        ['#0a0a22', '#0e0d2a', '#0c0c24', '#0d1028'],
+        ['#0f0d2d', '#0b0c24', '#0a0a22', '#0e0d2a'],
+        ['#0b0b25', '#0d0d28', '#0d1028', '#0a0a22'],
+      ];
+      const zoneW = FM_WORLD_W / 4, zoneH = FM_WORLD_H / 4;
+      for (let row = 0; row < 4; row++)
+        for (let col = 0; col < 4; col++)
+          { bg.fillStyle = zoneColors[row][col]; bg.fillRect(col * zoneW, row * zoneH, zoneW, zoneH); }
+
+      const hexSize = 30, hexW = hexSize * 2, hexH = hexSize * Math.sqrt(3);
+      bg.strokeStyle = 'rgba(80,70,160,0.08)'; bg.lineWidth = 0.8;
+      for (let row = -1; row < FM_WORLD_H / hexH + 1; row++) {
+        for (let col = -1; col < FM_WORLD_W / hexW + 1; col++) {
+          const cx = col * hexW * 0.75, cy = row * hexH + (col % 2 ? hexH / 2 : 0);
+          bg.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = Math.PI / 3 * i - Math.PI / 6;
+            const hx = cx + hexSize * 0.55 * Math.cos(a), hy = cy + hexSize * 0.55 * Math.sin(a);
+            i === 0 ? bg.moveTo(hx, hy) : bg.lineTo(hx, hy);
+          }
+          bg.closePath(); bg.stroke();
+        }
+      }
+
+      const g = bg.createRadialGradient(FM_WORLD_W / 2, FM_WORLD_H / 2, 0, FM_WORLD_W / 2, FM_WORLD_H / 2, FM_WORLD_W * 0.4);
+      g.addColorStop(0, 'rgba(123,104,238,0.04)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      bg.fillStyle = g; bg.fillRect(0, 0, FM_WORLD_W, FM_WORLD_H);
+
+      for (let i = 0; i < 200; i++) {
+        const sx = Math.random() * FM_WORLD_W, sy = Math.random() * FM_WORLD_H;
+        bg.fillStyle = 'rgba(180,170,255,' + (Math.random() * 0.15 + 0.05) + ')';
+        bg.beginPath(); bg.arc(sx, sy, Math.random() * 1.5 + 0.3, 0, Math.PI * 2); bg.fill();
+      }
+
+      const ac = ['rgba(123,104,238,0.06)', 'rgba(0,255,204,0.05)', 'rgba(255,110,196,0.04)', 'rgba(255,215,0,0.04)'];
+      for (let i = 0; i < 30; i++) {
+        const ax = Math.random() * FM_WORLD_W, ay = Math.random() * FM_WORLD_H, ar = Math.random() * 60 + 30;
+        const ag = bg.createRadialGradient(ax, ay, 0, ax, ay, ar);
+        ag.addColorStop(0, ac[Math.floor(Math.random() * ac.length)]);
+        ag.addColorStop(1, 'rgba(0,0,0,0)');
+        bg.fillStyle = ag; bg.beginPath(); bg.arc(ax, ay, ar, 0, Math.PI * 2); bg.fill();
+      }
+
+      return bgCanvas;
+    }
+
+    function renderMpFreeFrame() {
+      const state = mpFreeState;
+      if (!state) return;
+      const cw = canvas.width, ch = canvas.height;
+
+      // Smooth camera
+      const me = state.players.find(p => p.id === myId);
+      const tcx = (me && me.alive && typeof me.headX === 'number') ? me.headX - cw / 2 : FM_WORLD_W / 2 - cw / 2;
+      const tcy = (me && me.alive && typeof me.headY === 'number') ? me.headY - ch / 2 : FM_WORLD_H / 2 - ch / 2;
+      mpCamX += (tcx - mpCamX) * 0.12;
+      mpCamY += (tcy - mpCamY) * 0.12;
+      if (isNaN(mpCamX)) mpCamX = FM_WORLD_W / 2 - cw / 2;
+      if (isNaN(mpCamY)) mpCamY = FM_WORLD_H / 2 - ch / 2;
+      mpCamX = Math.max(0, Math.min(FM_WORLD_W - cw, mpCamX));
+      mpCamY = Math.max(0, Math.min(FM_WORLD_H - ch, mpCamY));
+
+      if (!mpBgCanvas) mpBgCanvas = generateMpBackground();
+
+      // Hijack solo-mode globals
+      const save = {};
+      for (const k of ['fmCamX','fmCamY','fmFoods','fmPowerups','fmBots','fmAlive','fmHeadX','fmHeadY','fmAngle','fmTrail','fmLength','fmBuffs','fmBgCanvas','fmWrapMode']) {
+        save[k] = eval(k);
+      }
+
+      fmCamX = mpCamX; fmCamY = mpCamY;
+      fmFoods = state.foods; fmPowerups = state.powerups;
+      fmWrapMode = state.wrapMode || false;
+      fmBgCanvas = mpBgCanvas;
+      fmAlive = false;
+      fmBots = [];
+      for (const p of state.players) {
+        if (!p.alive || !p.trail || p.trail.length === 0) continue;
+        fmBots.push({ headX: p.headX, headY: p.headY, angle: p.angle || 0, trail: p.trail, length: p.length, color: p.color || '#ff6ec4', buffs: p.buffs || {}, alive: true });
+      }
+
+      drawFreeMoveGame();
+
+      for (const k of ['fmCamX','fmCamY','fmFoods','fmPowerups','fmBots','fmAlive','fmHeadX','fmHeadY','fmAngle','fmTrail','fmLength','fmBuffs','fmBgCanvas','fmWrapMode']) {
+        eval(k + ' = save.' + k);
+      }
+
+      // HUD
+      const hud = document.getElementById('gameHud');
+      if (hud) {
+        const timer = Math.ceil(state.timer);
+        const infinite = !!state.infinite;
+        const tc = (!infinite && timer <= 10) ? 'timer urgent' : 'timer';
+        const ts = infinite ? '∞' : Math.floor(timer/60) + ':' + (timer%60).toString().padStart(2,'0');
+        let h = '<div class="hud-item ' + tc + '">' + ts + '</div>';
+        for (const p of state.players) {
+          if (p.alive) {
+            h += '<div class="hud-item"><span class="hud-dot" style="background:' + p.color + ';box-shadow:0 0 6px ' + p.color + ';"></span>' + escHtml(p.name) + ' <span class="hud-score">' + p.score + '</span></div>';
+          } else {
+            h += '<div class="hud-item" style="opacity:0.5;"><span class="hud-dot" style="background:' + p.color + ';box-shadow:0 0 6px ' + p.color + ';opacity:0.4;"></span>' + escHtml(p.name) + ' <span class="hud-score">' + p.score + '</span><span style="color:#ff6ec4;font-size:0.75rem;margin-left:0.3rem;">复活中</span></div>';
+          }
+        }
+        hud.innerHTML = h;
+      }
+    }
+
+        // ===== FREE MOVEMENT MODE ENGINE =====
     let fmHeadX, fmHeadY;
     let fmAngle, fmTargetAngle;
     let fmSpeed;
@@ -2238,23 +2446,42 @@
     }
 
     function fmBotTargetAngle(bot) {
-      // Find nearest food / powerup
-      let nearestDist = Infinity;
-      let target = null;
-      for (const f of fmFoods) {
-        const d = fmDist(bot.headX, bot.headY, f.x, f.y);
-        if (d < nearestDist) { nearestDist = d; target = f; }
+      // --- Multi-food targeting ---
+      // Weighted blend toward nearby foods (closer = stronger pull).
+      // This prevents oscillation when two foods are equidistant.
+      let foodDx = 0, foodDy = 0, foodWeight = 0;
+      let sorted = [...fmFoods].map(f => ({ ...f, d: fmDist(bot.headX, bot.headY, f.x, f.y) }));
+      sorted.sort((a, b) => a.d - b.d);
+      for (let i = 0; i < Math.min(sorted.length, 5); i++) {
+        const f = sorted[i];
+        if (f.d < 1) continue;
+        const w = 1 / Math.max(f.d, 1);
+        foodDx += (f.x - bot.headX) / f.d * w;
+        foodDy += (f.y - bot.headY) / f.d * w;
+        foodWeight += w;
       }
+      // Powerups nearby get extra strong pull
       for (const pu of fmPowerups) {
         const d = fmDist(bot.headX, bot.headY, pu.x, pu.y);
-        if (d < 400 && d < nearestDist) { nearestDist = d; target = pu; }
+        if (d < 400 && d > 0) {
+          const w = 3 / Math.max(d, 1);
+          foodDx += (pu.x - bot.headX) / d * w;
+          foodDy += (pu.y - bot.headY) / d * w;
+          foodWeight += w;
+        }
       }
 
-      // Default: head directly toward target (or world center)
-      let dx = target ? (target.x - bot.headX) : (FM_WORLD_W / 2 - bot.headX);
-      let dy = target ? (target.y - bot.headY) : (FM_WORLD_H / 2 - bot.headY);
+      // Default direction: weighted food blend, or world center if no food
+      let dx, dy;
+      if (foodWeight > 0) {
+        dx = foodDx / foodWeight;
+        dy = foodDy / foodWeight;
+      } else {
+        dx = FM_WORLD_W / 2 - bot.headX;
+        dy = FM_WORLD_H / 2 - bot.headY;
+      }
 
-      // Wall avoidance — only when critically close (hard boundary)
+      // --- Wall avoidance ---
       const m = FM_BOUNDARY_MARGIN + 30;
       if (!fmWrapMode) {
         const wallForce = 8;
@@ -2264,17 +2491,57 @@
         if (bot.headY > FM_WORLD_H - m) dy -= wallForce;
       }
 
-      // Head-on collision avoidance with player and other bots
-      const heads = [{ x: fmHeadX, y: fmHeadY }];
-      for (const other of fmBots) {
-        if (other.id !== bot.id && other.alive) heads.push({ x: other.headX, y: other.headY });
+      // --- Collision avoidance with trajectory prediction ---
+      // Build danger points: current head positions + projected future positions
+      const dangerPoints = [];
+
+      // Player: current head + projected positions based on fmAngle and speed
+      if (fmAlive) {
+        dangerPoints.push({ x: fmHeadX, y: fmHeadY, w: 1.5 });
+        const pSpeed = fmGetSpeed ? fmGetSpeed() : FM_SPEED;
+        // Project forward 0.3s, 0.6s, 0.9s ahead
+        for (let ahead = 1; ahead <= 3; ahead++) {
+          const dist = pSpeed * 0.3 * ahead;
+          dangerPoints.push({
+            x: fmHeadX + Math.cos(fmAngle) * dist,
+            y: fmHeadY + Math.sin(fmAngle) * dist,
+            w: 0.7 / ahead,
+          });
+        }
+        // Sample a few body segments from player trail for repulsion
+        for (let i = FM_SEGMENT_GAP; i < fmTrail.length; i += FM_SEGMENT_GAP * 4) {
+          dangerPoints.push({ x: fmTrail[i].x, y: fmTrail[i].y, w: 0.5 });
+        }
       }
-      for (const h of heads) {
-        const d = fmDist(bot.headX, bot.headY, h.x, h.y);
-        if (d < FM_HEAD_RADIUS * 12 && d > 0) {
-          const f = 1 - d / (FM_HEAD_RADIUS * 12);
-          dx += (bot.headX - h.x) / d * 6 * f * f;
-          dy += (bot.headY - h.y) / d * 6 * f * f;
+
+      // Other bots: current head + projected positions
+      for (const other of fmBots) {
+        if (other.id === bot.id || !other.alive) continue;
+        dangerPoints.push({ x: other.headX, y: other.headY, w: 1.2 });
+        const oSpeed = fmBotGetSpeed(other);
+        for (let ahead = 1; ahead <= 3; ahead++) {
+          const dist = oSpeed * 0.3 * ahead;
+          dangerPoints.push({
+            x: other.headX + Math.cos(other.angle) * dist,
+            y: other.headY + Math.sin(other.angle) * dist,
+            w: 0.6 / ahead,
+          });
+        }
+        // Sample body segments from other bots
+        for (let i = FM_SEGMENT_GAP; i < other.trail.length; i += FM_SEGMENT_GAP * 4) {
+          dangerPoints.push({ x: other.trail[i].x, y: other.trail[i].y, w: 0.4 });
+        }
+      }
+
+      // Apply repulsion from all danger points
+      const avoidRadius = FM_HEAD_RADIUS * 14;
+      for (const dp of dangerPoints) {
+        const d = fmDist(bot.headX, bot.headY, dp.x, dp.y);
+        if (d < avoidRadius && d > 0.1) {
+          const f = (1 - d / avoidRadius) * dp.w;
+          const force = 8 * f * f;
+          dx += (bot.headX - dp.x) / d * force;
+          dy += (bot.headY - dp.y) / d * force;
         }
       }
 
